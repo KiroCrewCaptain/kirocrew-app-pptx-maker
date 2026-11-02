@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# Install-time state the gateway writes into an installed copy. Never commit it:
+# it carries machine-local paths and the app's own data.
+data/
+.app_secret
+installed.json
+app-crons.json
+# Capture scratch. capture.py writes its raw frames and video under the system
+# temp directory and only the final media into docs/media/; these catch a run
+# pointed somewhere else by hand.
+*.raw.png
+*.webm

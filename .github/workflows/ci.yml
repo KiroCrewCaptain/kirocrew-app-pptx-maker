@@ -1,0 +1,130 @@
+name: CI
+
+# The app's backend and UI tests. They run offline: the only network use is
+# installing the pinned test dependencies, and no test opens a socket beyond
+# aiohttp's loopback test server.
+#
+# The OS matrix is the manifest's `platform.os` claim. That field is a published
+# capability label, so every OS it names is tested here: PPTX Maker's path
+# containment folds Windows' extended-length prefix and refuses junctions, its
+# managed pdftoppm launcher is a `.cmd` on Windows and a shell script elsewhere,
+# and its agent templates must render to valid JSON from Windows-shaped paths.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Kiro Crew requires Python >= 3.12, and hooks run in the gateway's own
+        # interpreter, so this is the floor the app must work on.
+        python: ["3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install pinned test dependencies
+        run: python -m pip install -r tests/requirements.txt
+
+      - name: Validate app.json is JSON
+        run: python -c "import json; json.load(open('app.json', encoding='utf-8'))"
+
+      - name: Lint
+        run: python -m pip install flake8==7.1.0 && python -m flake8 backend tests
+
+      - name: Run tests
+        run: python -m pytest
+
+  # The dashboard page is a committed ESM bundle (ui/dist/index.mjs): a Kiro Crew
+  # install is a plain clone with no build step. This job proves the committed
+  # bundle is exactly what the committed source builds.
+  ui:
+    name: UI (typecheck, test, reproducible bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: The committed bundle is the build output
+        run: git diff --exit-code -- dist
+
+  # Kiro Crew's shared internal-content gate, run on this repository's diffs.
+  # The two identifiers are KiroCrewCaptain org secrets; without them the scan
+  # fails with its reason, it never passes. A fork PR has no OIDC token, so it is
+  # skipped rather than failed.
+  internal-content-scan:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: kirodotdev/KiroCrew/.github/workflows/internal-content-scan.yml@a3fe54920e7a8db1afce9e9919a1fa4bf8227563
+    # Granted here: a reusable workflow's token is capped by the calling job.
+    permissions:
+      contents: read
+      id-token: write
+    # Named explicitly, never `secrets: inherit`.
+    secrets:
+      KIRO_RELEASE_GATE_ROLE_ARN: ${{ secrets.KIRO_RELEASE_GATE_ROLE_ARN }}
+      KIRO_RELEASE_GATE_BUCKET: ${{ secrets.KIRO_RELEASE_GATE_BUCKET }}
+
+  # The mechanical half of CHECKLIST.md: required README sections, no template
+  # placeholders, alt text on every image, and every referenced media file
+  # present and inside its size budget. Media are captured locally
+  # (capture/README.md) and committed; CI never boots Kiro Crew.
+  readme:
+    name: README standard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Check README.md against CHECKLIST.md
+        run: python capture/check_readme.py README.md
+
+      - name: Check scenes.json parses
+        run: python -c "import json; json.load(open('capture/scenes.json', encoding='utf-8'))"

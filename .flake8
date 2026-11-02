@@ -1,0 +1,6 @@
+[flake8]
+# The ported backend and tests keep Kiro Crew's black formatting and its flake8
+# settings: black puts whitespace before ':' in slices and breaks lines before
+# binary operators, and leaves a few long lines it cannot split.
+max-line-length = 100
+extend-ignore = E203, W503, E501

@@ -1,0 +1,17 @@
+PPTX Maker, an app for Kiro Crew
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+Licensed under the MIT No Attribution license (MIT-0); see LICENSE. PPTX Maker
+was written by sktok as a standalone app and carried in Kiro Crew as a
+built-in; see ATTRIBUTION.md.
+
+The page bundle (ui/dist/index.mjs) is built from this repository's own
+sources plus DOMPurify 3.4.17 (Cure53 and other contributors, dual-licensed
+under the Apache License 2.0 and the Mozilla Public License 2.0; its license
+header is kept in the bundle). React, lucide-react, TanStack Query and the
+Kiro Crew App SDK are provided by the Kiro Crew dashboard at run time.
+
+The presentation engine, spec-driven-presentation-maker (AWS Samples,
+MIT-0), is not part of this repository: the app downloads it on first use,
+at a sha256-pinned commit, into its own data folder. The pdftoppm stand-in it
+then installs runs pypdfium2 and Pillow from the engine's own environment.

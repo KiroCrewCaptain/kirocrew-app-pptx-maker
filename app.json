@@ -1,0 +1,250 @@
+{
+  "name": "pptx-maker",
+  "version": "0.3.0",
+  "displayName": "PPTX Maker",
+  "description": "Describe the deck you want in chat and get a real .pptx back. An agent interviews you, writes a brief, an outline and an art direction, then composes every slide and generates the file — and you watch each deliverable appear in a live preview beside the conversation. Slides render as animated SVG as they are built, so you can see a deck take shape instead of waiting for a download. Reusable styles and .pptx templates let the same content come out looking like three different presentations.",
+  "author": "sktok",
+  "license": "MIT-0",
+  "minKiroCrewVersion": "0.12.0",
+  "tags": [
+    "pptx",
+    "presentation",
+    "slides",
+    "productivity",
+    "documents"
+  ],
+  "highlights": [
+    "Chat your way to a finished .pptx — Spec mode plans it carefully, Vibe mode turns a URL or pasted text straight into slides",
+    "Live preview of every deliverable: brief, outline, art direction, then slides as animated SVG while they compose",
+    "Styles set the visual mood and .pptx templates set the structure, so one deck can be re-skinned without rewriting content",
+    "Import your own HTML style or existing .pptx template and the agent follows its colours, fonts and layouts",
+    "Open the finished file or reveal its folder without leaving the dashboard",
+    "Wraps the public spec-driven-presentation-maker engine, fetched at a sha256-pinned version; nothing to install by hand"
+  ],
+  "defaultEnabled": false,
+  "agents": [
+    "agents/pptx-maker-spec.json",
+    "agents/pptx-maker-composer.json",
+    "agents/pptx-maker-vibe.json",
+    "agents/pptx-maker-style.json"
+  ],
+  "skills": [
+    "skills/pptx-maker"
+  ],
+  "permissions": {
+    "api": [
+      "/api/apps/pptx-maker",
+      "/api/apps/pptx-maker/*"
+    ],
+    "mcpTools": [
+      "@sdpm/analyze_template",
+      "@sdpm/apply_style",
+      "@sdpm/code_to_slide",
+      "@sdpm/generate_pptx",
+      "@sdpm/grid",
+      "@sdpm/import_attachment",
+      "@sdpm/init_presentation",
+      "@sdpm/list_asset_sources",
+      "@sdpm/list_guides",
+      "@sdpm/list_styles",
+      "@sdpm/list_templates",
+      "@sdpm/list_workflows",
+      "@sdpm/measure_slides",
+      "@sdpm/pptx_to_json",
+      "@sdpm/read_examples",
+      "@sdpm/read_guides",
+      "@sdpm/read_workflows",
+      "@sdpm/run_python",
+      "@sdpm/run_style_python",
+      "@sdpm/search_assets"
+    ],
+    "network": true,
+    "storage": true
+  },
+  "dependencies": {
+    "optionalCommands": [
+      "soffice",
+      "pdftoppm"
+    ]
+  },
+  "backend": {
+    "hooks": {
+      "routes": "backend.routes:register_routes"
+    }
+  },
+  "ui": {
+    "entry": "dist/index.mjs",
+    "pages": [
+      {
+        "route": "/apps/pptx-maker",
+        "label": "PPTX Maker"
+      }
+    ]
+  },
+  "platform": {
+    "os": [
+      "macos",
+      "linux",
+      "windows"
+    ]
+  },
+  "iconPath": "assets/icon.png",
+  "heroImage": "assets/hero-light.png",
+  "heroImageDark": "assets/hero-dark.png",
+  "heroImageDetail": "assets/hero-detail-light.png",
+  "heroImageDetailDark": "assets/hero-detail-dark.png",
+  "useCases": [
+    "Turn an idea, URL, or source text into a real presentation with live slide previews and reusable visual styles."
+  ],
+  "configuration": [
+    "Install the pinned engine on first use, optionally install LibreOffice for broader previews, choose an output directory, and import any HTML styles or PPTX templates you want reused."
+  ],
+  "screenshots": [
+    "assets/screenshot-main.png"
+  ],
+  "l10n": {
+    "bn": {
+      "displayName": "PPTX Maker",
+      "description": "চ্যাটে কেমন উপস্থাপনা চাও বলে দাও, আর সত্যিকারের একটি .pptx ফিরে পাও। একটি এজেন্ট তোমাকে কিছু প্রশ্ন করে, একটি সংক্ষিপ্তসার, একটি রূপরেখা ও একটি শিল্প নির্দেশনা লেখে, তারপর প্রতিটি স্লাইড সাজিয়ে ফাইলটি তৈরি করে — আর আলাপের পাশেই লাইভ প্রিভিউতে প্রতিটি ধাপের ফল তুমি দেখতে পাও। স্লাইডগুলো তৈরি হওয়ার সঙ্গে সঙ্গে অ্যানিমেটেড SVG হিসেবে দেখা যায়, তাই ডাউনলোডের অপেক্ষা না করেই উপস্থাপনাটা গড়ে উঠতে দেখা যায়। বারবার ব্যবহারযোগ্য শৈলী আর .pptx টেমপ্লেট দিয়ে একই লেখা তিনটি আলাদা উপস্থাপনার মতো দেখাতে পারে।",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "চ্যাট করেই একটি তৈরি .pptx পর্যন্ত পৌঁছাও — নির্দিষ্টকরণ মোড যত্ন করে পরিকল্পনা করে, চটজলদি মোড কোনো URL বা পেস্ট করা লেখা সোজা স্লাইডে বদলে দেয়",
+        "প্রতিটি ধাপের ফলের লাইভ প্রিভিউ: সংক্ষিপ্তসার, রূপরেখা, শিল্প নির্দেশনা, তারপর সাজানোর সময়েই অ্যানিমেটেড SVG হিসেবে স্লাইড",
+        "শৈলী চেহারার মেজাজ ঠিক করে আর .pptx টেমপ্লেট গড়ন ঠিক করে, তাই লেখা নতুন করে না লিখেই একটি উপস্থাপনার সাজ বদলে ফেলা যায়",
+        "নিজের HTML শৈলী বা আগে থেকে থাকা কোনো .pptx টেমপ্লেট আমদানি করো, আর এজেন্ট তার রং, ফন্ট ও লেআউট মেনে চলবে",
+        "ড্যাশবোর্ড ছেড়ে না গিয়েই তৈরি ফাইলটি খোলো বা তার ফোল্ডার দেখে নাও",
+        "প্রকাশ্য spec-driven-presentation-maker ইঞ্জিনটিকে মুড়ে রাখে, sha256-পিন করা ভার্সনে নামানো হয়; হাতে কিছু ইনস্টল করার নেই"
+      ]
+    },
+    "de": {
+      "displayName": "PPTX Maker",
+      "description": "Beschreibe im Chat die Präsentation, die du willst, und erhalte eine echte .pptx zurück. Ein Agent befragt dich, schreibt Briefing, Gliederung und Art-Direction, setzt dann jede Folie und erzeugt die Datei — und du siehst jedes Ergebnis in einer Live-Vorschau neben dem Gespräch erscheinen. Folien werden beim Bauen als animiertes SVG dargestellt, sodass du eine Präsentation entstehen siehst, statt auf einen Download zu warten. Wiederverwendbare Stile und .pptx-Vorlagen lassen denselben Inhalt wie drei verschiedene Präsentationen aussehen.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "Chatte dich zu einer fertigen .pptx — der Spec-Modus plant sorgfältig, der Vibe-Modus macht aus einer URL oder eingefügtem Text direkt Folien",
+        "Live-Vorschau jedes Ergebnisses: Briefing, Gliederung, Art-Direction, dann Folien als animiertes SVG, während sie entstehen",
+        "Stile bestimmen die visuelle Stimmung, .pptx-Vorlagen die Struktur, sodass eine Präsentation ein neues Aussehen erhalten kann, ohne Inhalte neu zu schreiben",
+        "Importiere ein eigenes HTML-Stildokument oder eine bestehende .pptx-Vorlage, und der Agent folgt deren Farben, Schriften und Layouts",
+        "Öffne die fertige Datei oder zeige ihren Ordner an, ohne das Dashboard zu verlassen",
+        "Kapselt die öffentliche Engine spec-driven-presentation-maker, die in einer per sha256 festgelegten Version geladen wird; nichts von Hand zu installieren"
+      ]
+    },
+    "es": {
+      "displayName": "PPTX Maker",
+      "description": "Describe en el chat la presentación que quieres y recibe un .pptx real. Un agente te entrevista, escribe un briefing, un esquema y una dirección de arte, luego compone cada diapositiva y genera el archivo — y tú ves aparecer cada entregable en una vista previa en vivo junto a la conversación. Las diapositivas se renderizan como SVG animado mientras se construyen, así que puedes ver cómo toma forma la presentación en lugar de esperar una descarga. Los estilos reutilizables y las plantillas .pptx permiten que el mismo contenido salga con el aspecto de tres presentaciones distintas.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "Llega a un .pptx terminado conversando — el modo especificación lo planea con cuidado y el modo directo convierte una URL o un texto pegado directamente en diapositivas",
+        "Vista previa en vivo de cada entregable: briefing, esquema, dirección de arte y luego las diapositivas como SVG animado mientras se componen",
+        "Los estilos definen el aire visual y las plantillas .pptx definen la estructura, así una presentación puede cambiar de apariencia sin reescribir el contenido",
+        "Importa tu propio estilo HTML o una plantilla .pptx existente y el agente sigue sus colores, tipografías y composiciones",
+        "Abre el archivo terminado o muestra su carpeta sin salir del panel",
+        "Envuelve el motor público spec-driven-presentation-maker, descargado en una versión fijada por sha256; nada que instalar a mano"
+      ]
+    },
+    "fr": {
+      "displayName": "PPTX Maker",
+      "description": "Décris dans le chat la présentation que tu veux et récupère un vrai fichier .pptx. Un agent t’interroge, rédige un brief, un plan et une direction artistique, puis compose chaque diapositive et génère le fichier — et tu vois chaque livrable apparaître dans un aperçu en direct, à côté de la conversation. Les diapositives sont rendues en SVG animé au fil de leur construction, pour voir une présentation prendre forme au lieu d’attendre un téléchargement. Des styles et des modèles .pptx réutilisables permettent au même contenu de ressembler à trois présentations différentes.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "Discute jusqu’à obtenir un .pptx terminé — le mode spécification planifie avec soin, le mode direct transforme une URL ou du texte collé directement en diapositives",
+        "Aperçu en direct de chaque livrable : brief, plan, direction artistique, puis diapositives en SVG animé pendant leur composition",
+        "Les styles fixent l’ambiance visuelle et les modèles .pptx fixent la structure, pour rhabiller une présentation sans réécrire son contenu",
+        "Importe ton propre style HTML ou un modèle .pptx existant, et l’agent en respecte les couleurs, les polices et les mises en page",
+        "Ouvre le fichier terminé ou affiche son dossier sans quitter le tableau de bord",
+        "Encapsule le moteur public spec-driven-presentation-maker, récupéré à une version épinglée par sha256 ; rien à installer à la main"
+      ]
+    },
+    "hi": {
+      "displayName": "PPTX Maker",
+      "description": "चैट में बताओ कि कैसा डेक चाहिए और असली .pptx वापस पाओ। एक एजेंट तुमसे सवाल पूछता है, ब्रीफ़, आउटलाइन और आर्ट डायरेक्शन लिखता है, फिर हर स्लाइड बनाता है और फ़ाइल तैयार करता है — और हर चीज़ बातचीत के साथ-साथ लाइव प्रीव्यू में दिखती जाती है। स्लाइड बनते वक़्त एनिमेटेड SVG के रूप में रेंडर होती हैं, इसलिए डाउनलोड का इंतज़ार करने की जगह डेक को आकार लेते देख सकते हो। दोबारा इस्तेमाल होने वाली स्टाइल और .pptx टेम्पलेट एक ही सामग्री को तीन अलग प्रेज़ेंटेशन जैसा दिखा सकते हैं।",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "बातचीत से पूरी .pptx तक पहुँचो — Spec मोड सोच-समझकर योजना बनाता है, Vibe मोड किसी URL या चिपकाए टेक्स्ट को सीधे स्लाइड में बदल देता है",
+        "हर चीज़ का लाइव प्रीव्यू: ब्रीफ़, आउटलाइन, आर्ट डायरेक्शन, और बनते वक़्त एनिमेटेड SVG के रूप में स्लाइड",
+        "स्टाइल विज़ुअल मूड तय करती हैं और .pptx टेम्पलेट ढाँचा, इसलिए सामग्री दोबारा लिखे बिना एक डेक की शक्ल बदली जा सकती है",
+        "अपनी HTML स्टाइल या मौजूदा .pptx टेम्पलेट इम्पोर्ट करो और एजेंट उसके रंग, फ़ॉन्ट और लेआउट का पालन करता है",
+        "डैशबोर्ड छोड़े बिना तैयार फ़ाइल खोलो या उसका फ़ोल्डर दिखाओ",
+        "सार्वजनिक spec-driven-presentation-maker इंजन को लपेटता है, जो sha256 पर पिन किए वर्शन से लाया जाता है; हाथ से कुछ इंस्टॉल नहीं करना पड़ता"
+      ]
+    },
+    "it": {
+      "displayName": "PPTX Maker",
+      "description": "Descrivi in chat la presentazione che vuoi e ricevi un vero .pptx. Un agente ti intervista, scrive un brief, una scaletta e una direzione artistica, poi compone ogni diapositiva e genera il file — e tu vedi ogni risultato comparire in un’anteprima dal vivo accanto alla conversazione. Le diapositive vengono rese come SVG animato mentre le costruisce, così vedi la presentazione prendere forma invece di aspettare un download. Stili riutilizzabili e modelli .pptx fanno sì che lo stesso contenuto possa sembrare tre presentazioni diverse.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "Arriva a un .pptx finito chiacchierando — la modalità specifica pianifica con cura, la modalità rapida trasforma un URL o del testo incollato direttamente in diapositive",
+        "Anteprima dal vivo di ogni risultato: brief, scaletta, direzione artistica e poi le diapositive come SVG animato mentre si compongono",
+        "Gli stili definiscono l’atmosfera visiva e i modelli .pptx la struttura, così una presentazione può cambiare aspetto senza riscriverne il contenuto",
+        "Importa un tuo stile HTML o un modello .pptx esistente e l’agente ne segue colori, caratteri e layout",
+        "Apri il file finito o mostra la sua cartella senza uscire dalla dashboard",
+        "Incapsula il motore pubblico spec-driven-presentation-maker, scaricato a una versione fissata con sha256; niente da installare a mano"
+      ]
+    },
+    "ja": {
+      "displayName": "PPTX Maker",
+      "description": "チャットでデッキについて説明し、実際の .pptx を取得します。エージェントがインタビューを行い、ブリーフ、アウトライン、アートディレクションを作成してからすべてのスライドを作成し、ファイルを生成します。会話の横に表示されるライブプレビューで各成果物を見ることができます。スライドは構築されるときにアニメーション SVG としてレンダリングされるため、ダウンロードを待つ代わりにデッキが構築される様子を見ることができます。再利用可能なスタイルと .pptx テンプレートにより、同じコンテンツを 3 つの異なるプレゼンテーションのように見せることができます。",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "チャットで完成した .pptx を実現 — 仕様モードは注意深く計画し、Vibe モードは URL または貼り付けたテキストをすぐにスライドに変換します",
+        "すべての成果物のライブプレビュー: ブリーフ、アウトライン、アートディレクション、その後は作成中のアニメーション SVG としてのスライド",
+        "スタイルが視覚的なムードを設定し、.pptx テンプレートが構造を設定するため、1 つのデッキをコンテンツを書き直さずに再スキン化できます",
+        "独自の HTML スタイルまたは既存の .pptx テンプレートをインポートすると、エージェントはその色、フォント、レイアウトに従います",
+        "完成したファイルを開くか、ダッシュボードを離れずにそのフォルダーを表示します",
+        "公開の仕様駆動型プレゼンテーションメーカーエンジンをラップし、sha256 ピン留めされたバージョンで取得します。手動でインストールするものはありません"
+      ]
+    },
+    "ko": {
+      "displayName": "PPTX Maker",
+      "description": "원하는 덱을 채팅으로 설명하면 실제 .pptx를 받습니다. 에이전트가 인터뷰하고 브리프, 개요, 아트 디렉션을 작성한 뒤 모든 슬라이드를 구성하고 파일을 생성하며, 대화 옆의 실시간 미리보기에서 각 산출물이 나타나는 것을 볼 수 있습니다. 슬라이드는 만들어지는 동안 애니메이션 SVG로 렌더링되므로 다운로드를 기다리는 대신 덱이 모습을 갖추는 과정을 볼 수 있습니다. 재사용 가능한 스타일과 .pptx 템플릿으로 같은 콘텐츠를 세 가지 다른 프레젠테이션처럼 보이게 할 수 있습니다.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "채팅으로 완성된 .pptx까지 — 스펙 모드는 꼼꼼히 계획하고, Vibe 모드는 URL이나 붙여넣은 텍스트를 바로 슬라이드로 만듭니다",
+        "모든 산출물의 실시간 미리보기: 브리프, 개요, 아트 디렉션, 그다음 구성되는 동안 애니메이션 SVG로 보이는 슬라이드",
+        "스타일이 시각적 분위기를, .pptx 템플릿이 구조를 정하므로 콘텐츠를 다시 쓰지 않고 덱 하나의 외형만 바꿀 수 있습니다",
+        "직접 만든 HTML 스타일이나 기존 .pptx 템플릿을 가져오면 에이전트가 그 색상·폰트·레이아웃을 따릅니다",
+        "대시보드를 떠나지 않고 완성된 파일을 열거나 해당 폴더를 표시합니다",
+        "공개 spec-driven-presentation-maker 엔진을 감싸며 sha256으로 고정된 버전을 가져옵니다. 직접 설치할 것은 없습니다"
+      ]
+    },
+    "pt": {
+      "displayName": "PPTX Maker",
+      "description": "Descreva no chat a apresentação que você quer e receba um .pptx de verdade. Um agente entrevista você, escreve um briefing, uma estrutura e uma direção de arte, depois compõe cada slide e gera o arquivo — e você vê cada entrega aparecer em uma pré-visualização ao vivo ao lado da conversa. Os slides são renderizados como SVG animado enquanto são construídos, para você ver a apresentação tomar forma em vez de esperar por um download. Estilos reutilizáveis e modelos .pptx permitem que o mesmo conteúdo saia com a aparência de três apresentações diferentes.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "Chegue a um .pptx pronto conversando — o Modo especificação planeja com cuidado, o Modo direto transforma uma URL ou um texto colado direto em slides",
+        "Pré-visualização ao vivo de cada entrega: briefing, estrutura, direção de arte e depois os slides como SVG animado enquanto são compostos",
+        "Os estilos definem o clima visual e os modelos .pptx definem a estrutura, então uma apresentação pode trocar de cara sem reescrever o conteúdo",
+        "Importe o seu próprio estilo em HTML ou um modelo .pptx existente e o agente segue as cores, as fontes e os layouts dele",
+        "Abra o arquivo final ou mostre a pasta dele sem sair do painel",
+        "Encapsula o motor público spec-driven-presentation-maker, obtido em uma versão fixada por sha256; nada para instalar à mão"
+      ]
+    },
+    "ru": {
+      "displayName": "PPTX Maker",
+      "description": "Опиши нужную презентацию в чате и получи настоящий .pptx. Агент задаёт вопросы, пишет брифинг, структуру и арт-дирекцию, затем собирает каждый слайд и создаёт файл — а ты видишь, как каждый результат появляется в живом предпросмотре рядом с разговором. Слайды отрисовываются как анимированный SVG по мере сборки, поэтому презентация складывается у тебя на глазах, а не приходит скачанным файлом. Переиспользуемые стили и шаблоны .pptx позволяют одному и тому же содержимому выглядеть как три разные презентации.",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "Готовый .pptx собирается прямо в чате — режим спецификации всё аккуратно планирует, быстрый режим превращает URL или вставленный текст сразу в слайды",
+        "Живой предпросмотр каждого результата: брифинг, структура, арт-дирекция, а затем слайды как анимированный SVG по мере сборки",
+        "Стили задают внешний настрой, а шаблоны .pptx — структуру, поэтому одну презентацию можно переодеть, не переписывая содержимое",
+        "Импортируй свой стиль в HTML или готовый шаблон .pptx — агент будет следовать его цветам, шрифтам и разметке",
+        "Открой готовый файл или покажи его папку, не покидая панель",
+        "Использует публичный движок spec-driven-presentation-maker, загружаемый в версии, закреплённой по sha256; ставить руками ничего не нужно"
+      ]
+    },
+    "zh-CN": {
+      "displayName": "PPTX Maker",
+      "description": "在聊天里描述你想要的演示文稿，拿回一个真正的 .pptx。代理会先访谈你，写出简报、大纲和美术方向，然后排版每一张幻灯片并生成文件 — 每份产出都会在对话旁边的实时预览里出现。幻灯片在构建过程中以动画 SVG 呈现，于是你能看着演示文稿成形，而不是干等下载。可复用的样式和 .pptx 模板，让同一份内容能做出三种不同的样子。",
+      "pageLabel": "PPTX Maker",
+      "highlights": [
+        "聊着聊着就得到一个完成的 .pptx — 规格模式会仔细规划，速成模式把 URL 或粘贴的文字直接变成幻灯片",
+        "每份产出都有实时预览：简报、大纲、美术方向，然后是排版过程中以动画 SVG 呈现的幻灯片",
+        "样式决定视觉调性，.pptx 模板决定结构，于是同一份演示文稿可以换皮而不用重写内容",
+        "导入自己的 HTML 样式或现有 .pptx 模板，代理会遵循其中的配色、字体和版式",
+        "不离开仪表板就能打开成品文件或定位到它所在的文件夹",
+        "封装公开的 spec-driven-presentation-maker 引擎，按 sha256 锁定的版本拉取；无需手动安装任何东西"
+      ]
+    }
+  }
+}
