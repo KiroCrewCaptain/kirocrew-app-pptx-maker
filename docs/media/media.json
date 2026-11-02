@@ -1,0 +1,90 @@
+{
+  "app": "pptx-maker",
+  "captured_at": "2026-11-02T17:20:17Z",
+  "app_commit": "24fbbf9ee453877573a1261c7b5e6f4eb109514e",
+  "kirocrew_commit": "99161724c0ffcb0af7fd64055e1f22bdde7476b3",
+  "kirocrew_tree_dirty": true,
+  "gateway": "isolated temporary home, approval=reads; a freshly seeded gateway for the stub screenshots, one for the live ones and one for the walkthrough",
+  "data": "fictional, seeded through the app's HTTP API (capture/scenes.json)",
+  "agent_backend": {
+    "live": [
+      "use-case-vibe"
+    ],
+    "live_model": "the operator's own installed, signed-in kiro-cli over ACP with model \"auto\"; the replies on screen are that model's and vary from run to run",
+    "stub": "Kiro Crew's offline stub ACP backend (capture/stub_backend.py) for every other scene; no chat reply is shown from it",
+    "credit_reading": "the browser answers the top bar's credit readout (/api/sessions/usage) with \"no reading\", so no account balance or email can be shown"
+  },
+  "note": "The isolated gateway ran Kiro Crew at the App Kit level-1 seams commit from a throwaway checkout in which the built-in PPTX Maker no longer registers (pptx_maker taken out of BUILTIN_NAMES, its app.json and its core pptx-maker skill removed) but its Python package stays importable, because today the gateway renders this app's agent templates from that package (PORTING.md gap 1). This repository was installed from a clean clone of the commit named in app_commit, trusted and enabled through the dashboard API, and its engine and icon packs were installed through the app's own routes. LibreOffice 26.8.2 (the official Linux build, unpacked, not installed) was on PATH so the engine could draw the slide previews; the managed pdftoppm was installed after the agents were registered, so the agent's own preview check could not use it (it says so in its reply). The live chat was switched to the per-chat Trust approval mode through the chat's own approval-mode menu; the gateway's default stayed 'reads'.",
+  "data_notes": [
+    "Every person, place, number and address in the demo deck is made up; the e-mail address uses the reserved .example domain.",
+    "The deck was written by the live agent in the use-case-vibe scene, from the pasted notes in capture/scenes.json, into a demo deck folder (/tmp/pptx-maker-demo/decks, set through the app's Settings route); the later screenshots and the walkthrough show that same deck. Its folder name carries the capture date.",
+    "The eight styles and two templates are the ones the pinned engine ships."
+  ],
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "device_scale": 2,
+  "screenshots": [
+    {
+      "file": "hero-dark.png",
+      "name": "hero",
+      "theme": "dark",
+      "bytes": 290084,
+      "width": 1600,
+      "height": 1000,
+      "alt": "The PPTX Maker page: Decks 1, Slides 5, Finished files 1, Styles 8, Templates 2; the Start a deck card with Spec mode, Vibe mode and Style creator; and the Harbor Lane deck open on its Slides tab, showing the first two slides drawn in green: 'Spring update' with a plant-pot badge, and 'The garden grew this spring' with 42 raised beds, a 30-to-42 bar chart, 8 wheelchair-height beds and 3,000 L of rain a month"
+    },
+    {
+      "file": "hero-light.png",
+      "name": "hero",
+      "theme": "light",
+      "bytes": 274607,
+      "width": 1600,
+      "height": 1000,
+      "alt": "The PPTX Maker page: Decks 1, Slides 5, Finished files 1, Styles 8, Templates 2; the Start a deck card with Spec mode, Vibe mode and Style creator; and the Harbor Lane deck open on its Slides tab, showing the first two slides drawn in green: 'Spring update' with a plant-pot badge, and 'The garden grew this spring' with 42 raised beds, a 30-to-42 bar chart, 8 wheelchair-height beds and 3,000 L of rain a month"
+    },
+    {
+      "file": "use-case-outline-light.png",
+      "name": "use-case-outline",
+      "theme": "light",
+      "bytes": 263460,
+      "width": 1600,
+      "height": 1000,
+      "alt": "The Harbor Lane deck on its Outline tab: five lines, one per slide, from [title] 'Volunteers feel welcomed and know this is the Harbor Lane Community Garden spring update' to [next-goals] 'Volunteers are excited about what's next (compost class 14 May, shade pergola by June) and know where to ask questions'"
+    },
+    {
+      "file": "use-case-style-light.png",
+      "name": "use-case-style",
+      "theme": "light",
+      "bytes": 182524,
+      "width": 1600,
+      "height": 1000,
+      "alt": "The Library view on Styles: the eight bundled styles (border, corporate-executive, cute-playful, elegant-dark, elegant-light, flat-shadow, lumina, tech-cyber) with thumbnails, elegant-light selected, the line 'Reference it in chat as [Style: elegant-light]', and its cover slide 'ELEGANT LIGHT' previewed on the right"
+    },
+    {
+      "file": "use-case-vibe-light.png",
+      "name": "use-case-vibe",
+      "theme": "light",
+      "bytes": 339480,
+      "width": 1600,
+      "height": 1000,
+      "alt": "A Vibe mode chat on the pptx-maker-vibe agent, set to Trust: the pasted garden notes are collapsed at the top, and the agent's reply says the five-slide deck is ready at its output.pptx path, that it could not look at the slides as pictures because the preview tool is missing on this machine, lists the five slides (Title, Growth, Saturdays, Seed library, What's next) with what each shows, says the look is light and green with garden icons and speaker notes, and lists four friendly lines it added that are not in the notes; buttons offer 'Looks good, I'm done', 'Remove the extra friendly lines' and 'Make the green brighter'"
+    }
+  ],
+  "walkthrough": {
+    "shortened_waits_s": [],
+    "mp4": {
+      "file": "walkthrough.mp4",
+      "bytes": 805677
+    },
+    "gif": {
+      "file": "walkthrough.gif",
+      "bytes": 5023883,
+      "width": 960,
+      "fps": 10
+    },
+    "theme": "light",
+    "alt": "A walkthrough of PPTX Maker: the Harbor Lane deck on the Slides tab, scrolling through the green slides; the Brief, Outline and Art direction tabs; pointing at Download .pptx; the Library with the elegant-light style and its [Style: elegant-light] token; the Templates list with blank-dark; and finally Vibe mode, which opens a new chat on the pptx-maker-vibe agent"
+  }
+}

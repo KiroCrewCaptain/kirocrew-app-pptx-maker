@@ -1,0 +1,342 @@
+{
+ "app": "pptx-maker",
+ "fixture": "minimal",
+ "locale": "en-US",
+ "timezone": "UTC",
+ "provenance_note": "The isolated gateway ran Kiro Crew at the App Kit level-1 seams commit from a throwaway checkout in which the built-in PPTX Maker no longer registers (pptx_maker taken out of BUILTIN_NAMES, its app.json and its core pptx-maker skill removed) but its Python package stays importable, because today the gateway renders this app's agent templates from that package (PORTING.md gap 1). This repository was installed from a clean clone of the commit named in app_commit, trusted and enabled through the dashboard API, and its engine and icon packs were installed through the app's own routes. LibreOffice 26.8.2 (the official Linux build, unpacked, not installed) was on PATH so the engine could draw the slide previews; the managed pdftoppm was installed after the agents were registered, so the agent's own preview check could not use it (it says so in its reply). The live chat was switched to the per-chat Trust approval mode through the chat's own approval-mode menu; the gateway's default stayed 'reads'.",
+ "data_notes": [
+  "Every person, place, number and address in the demo deck is made up; the e-mail address uses the reserved .example domain.",
+  "The deck was written by the live agent in the use-case-vibe scene, from the pasted notes in capture/scenes.json, into a demo deck folder (/tmp/pptx-maker-demo/decks, set through the app's Settings route); the later screenshots and the walkthrough show that same deck. Its folder name carries the capture date.",
+  "The eight styles and two templates are the ones the pinned engine ships."
+ ],
+ "init_storage": {
+  "mc-nav": "0"
+ },
+ "ready": "text=Start a deck",
+ "forbid_text": [
+  "Installing the presentation engine",
+  "is not installed yet",
+  "could not be installed",
+  "Installing the icon packs",
+  "owner authorization required",
+  "Preview unavailable"
+ ],
+ "setup": [
+  {
+   "name": "remove the built-in's record the seed fixture carries",
+   "method": "POST",
+   "path": "/api/apps/pptx-maker/uninstall",
+   "body": {},
+   "expect": [
+    200,
+    404
+   ],
+   "optional": true
+  },
+  {
+   "name": "install this repository",
+   "method": "POST",
+   "path": "/api/apps/install",
+   "body": {
+    "source": "{{app_root}}"
+   }
+  },
+  {
+   "name": "trust it (it runs its own code in the gateway)",
+   "method": "POST",
+   "path": "/api/security/trusted-apps/pptx-maker"
+  },
+  {
+   "name": "turn the app on",
+   "method": "POST",
+   "path": "/api/apps/pptx-maker/enable"
+  },
+  {
+   "name": "retire the host's one-time startup intro",
+   "method": "POST",
+   "path": "/api/feature-videos/feedback",
+   "body": {
+    "id": "crewmates",
+    "status": "dismissed"
+   },
+   "optional": true
+  },
+  {
+   "name": "turn off the host's feature tips",
+   "method": "POST",
+   "path": "/api/tips/feedback",
+   "body": {
+    "id": "",
+    "action": "optout"
+   },
+   "optional": true
+  },
+  {
+   "name": "write decks to the demo folder",
+   "method": "PUT",
+   "path": "/api/apps/pptx-maker/settings",
+   "body": {
+    "deckRoot": "/tmp/pptx-maker-demo/decks"
+   }
+  },
+  {
+   "name": "install the presentation engine",
+   "method": "POST",
+   "path": "/api/apps/pptx-maker/engine/provision",
+   "expect": [
+    202
+   ]
+  },
+  {
+   "name": "wait for the engine",
+   "method": "GET",
+   "path": "/api/apps/pptx-maker/engine",
+   "until": {
+    "path": "ready",
+    "equals": true
+   },
+   "timeout_ms": 900000,
+   "interval_ms": 3000
+  },
+  {
+   "name": "install the icon packs",
+   "method": "POST",
+   "path": "/api/apps/pptx-maker/assets/provision",
+   "expect": [
+    202
+   ]
+  },
+  {
+   "name": "wait for the icon packs",
+   "method": "GET",
+   "path": "/api/apps/pptx-maker/assets",
+   "until": {
+    "path": "ready",
+    "equals": true
+   },
+   "timeout_ms": 900000,
+   "interval_ms": 3000
+  }
+ ],
+ "screenshots": [
+  {
+   "name": "hero",
+   "path": "/apps/pptx-maker",
+   "themes": [
+    "light",
+    "dark"
+   ],
+   "ready": "div.absolute.inset-0 > svg",
+   "settle_ms": 3500,
+   "steps": [],
+   "alt": "The PPTX Maker page: Decks 1, Slides 5, Finished files 1, Styles 8, Templates 2; the Start a deck card with Spec mode, Vibe mode and Style creator; and the Harbor Lane deck open on its Slides tab, showing the first two slides drawn in green: 'Spring update' with a plant-pot badge, and 'The garden grew this spring' with 42 raised beds, a 30-to-42 bar chart, 8 wheelchair-height beds and 3,000 L of rain a month"
+  },
+  {
+   "name": "use-case-outline",
+   "path": "/apps/pptx-maker",
+   "themes": [
+    "light"
+   ],
+   "ready": "div.absolute.inset-0 > svg",
+   "steps": [
+    {
+     "click": "role=radio[name='Outline']"
+    },
+    {
+     "wait_ms": 2500
+    }
+   ],
+   "settle_ms": 1500,
+   "alt": "The Harbor Lane deck on its Outline tab: five lines, one per slide, from [title] 'Volunteers feel welcomed and know this is the Harbor Lane Community Garden spring update' to [next-goals] 'Volunteers are excited about what's next (compost class 14 May, shade pergola by June) and know where to ask questions'"
+  },
+  {
+   "name": "use-case-style",
+   "path": "/apps/pptx-maker",
+   "themes": [
+    "light"
+   ],
+   "steps": [
+    {
+     "click": "role=radio[name='Library']"
+    },
+    {
+     "wait_for": "text=elegant-light"
+    },
+    {
+     "click": "text=elegant-light"
+    },
+    {
+     "wait_for": "iframe[title='Style preview']"
+    }
+   ],
+   "settle_ms": 2500,
+   "alt": "The Library view on Styles: the eight bundled styles (border, corporate-executive, cute-playful, elegant-dark, elegant-light, flat-shadow, lumina, tech-cyber) with thumbnails, elegant-light selected, the line 'Reference it in chat as [Style: elegant-light]', and its cover slide 'ELEGANT LIGHT' previewed on the right"
+  },
+  {
+   "name": "use-case-vibe",
+   "path": "/apps/pptx-maker",
+   "themes": [
+    "light"
+   ],
+   "live": true,
+   "steps": [
+    {
+     "click": "text=Vibe mode"
+    },
+    {
+     "wait_for": "textarea[aria-label='Message input']"
+    },
+    {
+     "click": "button[aria-label^='Approval mode']"
+    },
+    {
+     "click": "[role=menuitem]:has-text('In this chat')"
+    },
+    {
+     "fill": "textarea[aria-label='Message input']",
+     "value": "Turn this into a five-slide deck for our volunteers. Keep it friendly, with a fresh green look.\n\nHarbor Lane Community Garden: spring update\n- 42 raised beds this season, up from 30 last year; 8 of the new beds are wheelchair height.\n- Our rain barrels now catch about 3,000 litres a month, enough to water the herb rows all summer.\n- Saturday work mornings run 9 to 11 am. Tools are in the blue shed; gloves are in the bin by the gate.\n- The seed library has 120 packets: take two, and bring seeds back in the autumn.\n- Next goals: a shade pergola by June, and a compost class on 14 May.\n- Questions: hello@harborlane-garden.example"
+    },
+    {
+     "press": "textarea[aria-label='Message input']",
+     "key": "Enter"
+    },
+    {
+     "wait_reply": true,
+     "timeout_ms": 1800000
+    },
+    {
+     "scroll_reply": "start",
+     "margin": 48
+    }
+   ],
+   "ready_after": "[data-role='assistant'] [data-testid='turn-stats']",
+   "alt": "A Vibe mode chat on the pptx-maker-vibe agent, set to Trust: the pasted garden notes are collapsed at the top, and the agent's reply says the five-slide deck is ready at its output.pptx path, that it could not look at the slides as pictures because the preview tool is missing on this machine, lists the five slides (Title, Growth, Saturdays, Seed library, What's next) with what each shows, says the look is light and green with garden icons and speaker notes, and lists four friendly lines it added that are not in the notes; buttons offer 'Looks good, I'm done', 'Remove the extra friendly lines' and 'Make the green brighter'"
+  }
+ ],
+ "walkthrough": {
+  "name": "walkthrough",
+  "theme": "light",
+  "path": "/apps/pptx-maker",
+  "ready_after": "div.absolute.inset-0 > svg",
+  "tail_ms": 3500,
+  "alt": "A walkthrough of PPTX Maker: the Harbor Lane deck on the Slides tab, scrolling through the green slides; the Brief, Outline and Art direction tabs; pointing at Download .pptx; the Library with the elegant-light style and its [Style: elegant-light] token; the Templates list with blank-dark; and finally Vibe mode, which opens a new chat on the pptx-maker-vibe agent",
+  "steps": [
+   {
+    "wait_ms": 1500
+   },
+   {
+    "caption": "PPTX Maker: decks an agent built from a chat",
+    "position": "bottom"
+   },
+   {
+    "wait_ms": 2800
+   },
+   {
+    "caption": "Each slide is drawn here as the agent composes it",
+    "position": "bottom"
+   },
+   {
+    "scroll": "div.absolute.inset-0 > svg >> nth=2"
+   },
+   {
+    "wait_ms": 2800
+   },
+   {
+    "click": "role=radio[name='Brief']"
+   },
+   {
+    "caption": "The brief, the outline and the art direction come first",
+    "position": "bottom"
+   },
+   {
+    "wait_ms": 2500
+   },
+   {
+    "click": "role=radio[name='Outline']"
+   },
+   {
+    "wait_ms": 2500
+   },
+   {
+    "click": "role=radio[name='Art direction']"
+   },
+   {
+    "wait_ms": 3000
+   },
+   {
+    "click": "role=radio[name='Slides']"
+   },
+   {
+    "wait_ms": 1200
+   },
+   {
+    "hover": "text=Download .pptx"
+   },
+   {
+    "caption": "Download the finished .pptx",
+    "position": "bottom"
+   },
+   {
+    "wait_ms": 2500
+   },
+   {
+    "click": "role=radio[name='Library']"
+   },
+   {
+    "wait_for": "text=elegant-light"
+   },
+   {
+    "click": "text=elegant-light"
+   },
+   {
+    "wait_for": "iframe[title='Style preview']"
+   },
+   {
+    "caption": "Pick a style, then paste its token into the chat",
+    "position": "bottom"
+   },
+   {
+    "wait_ms": 3500
+   },
+   {
+    "click": "role=radio[name='Templates']"
+   },
+   {
+    "wait_for": "text=blank-dark"
+   },
+   {
+    "click": "text=blank-dark"
+   },
+   {
+    "caption": "Templates are .pptx files that set the layouts and theme colours",
+    "position": "bottom"
+   },
+   {
+    "wait_ms": 3000
+   },
+   {
+    "caption": "",
+    "position": "bottom"
+   },
+   {
+    "click": "role=radio[name='Decks']"
+   },
+   {
+    "wait_ms": 1000
+   },
+   {
+    "click": "text=Vibe mode"
+   },
+   {
+    "wait_for": "textarea[aria-label='Message input']"
+   },
+   {
+    "caption": "Vibe mode opens a chat on the app's own agent: paste your notes and send",
+    "above": "textarea[aria-label='Message input']"
+   },
+   {
+    "wait_ms": 3500
+   }
+  ]
+ }
+}
