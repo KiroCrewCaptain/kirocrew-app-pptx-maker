@@ -360,9 +360,10 @@ vi.mock('../src/api', async () => {
 })
 
 // The animated SVG renderer fetches and mutates real DOM; the page tests care
-// that a slide slot renders, not how the SVG is assembled. The sanitiser helper
-// this module also exports is covered by SlidePreviewSanitize.test.tsx, which does
-// not mock it (importing the real module HERE re-enters the hoisted api mock).
+// that a slide slot renders, not how the SVG is assembled. The sanitiser helpers
+// this module also exports are covered by tests/SlidePreviewSanitize.test.tsx and
+// its render paths by tests/SlidePreviewCoverage.test.tsx, neither of which mocks
+// it (importing the real module HERE re-enters the hoisted api mock).
 vi.mock('../src/SlidePreview', () => ({
   default: ({ label }: { label: string }) => <div data-testid="slide-preview">{label}</div>,
 }))

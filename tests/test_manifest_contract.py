@@ -210,9 +210,18 @@ class TestTheManifest(unittest.TestCase):
             for p in sorted((APP_ROOT / "ui" / "i18n").glob("*.json"))
         }
         english = catalogs.pop("en")
-        for key in ("displayName", "description", "highlights", "useCases", "configuration"):
+        for key in ("displayName", "description", "useCases", "configuration"):
             with self.subTest(field=key):
                 self.assertEqual(manifest[key], builtin[key])
+        # One highlight describes the built-in's "reveal folder" action, which this
+        # copy replaces with "Copy folder path" (PORTING.md gap 4). Display copy is
+        # not part of what adoption compares, so it is the one line allowed to differ.
+        diverged = {4: "Download the finished file or copy its folder path without leaving the dashboard"}
+        self.assertEqual(len(manifest["highlights"]), len(builtin["highlights"]))
+        for index, (ours, theirs) in enumerate(zip(manifest["highlights"], builtin["highlights"])):
+            with self.subTest(highlight=index):
+                self.assertEqual(ours, diverged.get(index, theirs))
+        self.assertTrue(all("reveal" not in h.lower() for h in manifest["highlights"]))
         self.assertEqual(manifest["displayName"], english["display_name"])
         self.assertEqual(manifest["description"], english["description"])
         self.assertEqual(manifest["ui"]["pages"][0]["label"], english["page_label"])

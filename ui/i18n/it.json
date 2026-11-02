@@ -58,7 +58,7 @@
         "highlight_2": "Anteprima dal vivo di ogni risultato: brief, scaletta, direzione artistica e poi le diapositive come SVG animato mentre si compongono",
         "highlight_3": "Gli stili definiscono l’atmosfera visiva e i modelli .pptx la struttura, così una presentazione può cambiare aspetto senza riscriverne il contenuto",
         "highlight_4": "Importa un tuo stile HTML o un modello .pptx esistente e l’agente ne segue colori, caratteri e layout",
-        "highlight_5": "Apri il file finito o mostra la sua cartella senza uscire dalla dashboard",
+        "highlight_5": "Scarica il file finito o copia il percorso della sua cartella senza uscire dalla dashboard",
         "highlight_6": "Incapsula il motore pubblico spec-driven-presentation-maker, scaricato a una versione fissata con sha256; niente da installare a mano",
         "page_label": "PPTX Maker",
         "use_case_1": "Trasforma un'idea, un URL o un testo sorgente in una vera presentazione con anteprime live delle slide e stili visivi riutilizzabili.",

@@ -57,7 +57,7 @@
         "highlight_2": "Live preview of every deliverable: brief, outline, art direction, then slides as animated SVG while they compose",
         "highlight_3": "Styles set the visual mood and .pptx templates set the structure, so one deck can be re-skinned without rewriting content",
         "highlight_4": "Import your own HTML style or existing .pptx template and the agent follows its colours, fonts and layouts",
-        "highlight_5": "Open the finished file or reveal its folder without leaving the dashboard",
+        "highlight_5": "Download the finished file or copy its folder path without leaving the dashboard",
         "highlight_6": "Wraps the public spec-driven-presentation-maker engine, fetched at a sha256-pinned version; nothing to install by hand",
         "page_label": "PPTX Maker",
         "use_case_1": "Turn an idea, URL, or source text into a real presentation with live slide previews and reusable visual styles.",

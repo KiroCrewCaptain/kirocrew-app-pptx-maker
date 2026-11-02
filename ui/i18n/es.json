@@ -58,7 +58,7 @@
         "highlight_2": "Vista previa en vivo de cada entregable: briefing, esquema, dirección de arte y luego las diapositivas como SVG animado mientras se componen",
         "highlight_3": "Los estilos definen el aire visual y las plantillas .pptx definen la estructura, así una presentación puede cambiar de apariencia sin reescribir el contenido",
         "highlight_4": "Importa tu propio estilo HTML o una plantilla .pptx existente y el agente sigue sus colores, tipografías y composiciones",
-        "highlight_5": "Abre el archivo terminado o muestra su carpeta sin salir del panel",
+        "highlight_5": "Descarga el archivo terminado o copia la ruta de su carpeta sin salir del panel",
         "highlight_6": "Envuelve el motor público spec-driven-presentation-maker, descargado en una versión fijada por sha256; nada que instalar a mano",
         "page_label": "PPTX Maker",
         "use_case_1": "Convierte una idea, una URL o un texto de origen en una presentación real con vistas previas de diapositivas en vivo y estilos visuales reutilizables.",

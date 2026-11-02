@@ -16,6 +16,8 @@ This repository was ported from Kiro Crew's built-in PPTX Maker at KiroCrew `mai
   `src/kiro_crew/apps/builtins/pptx_maker/tests/test_{venv_paths,preview_tool_discovery}.py`,
   and the frontend tests `website/src/test/PptxMakerPage.test.tsx`,
   `website/src/test/PptxDeckViewerCov80.test.tsx`,
+  `website/src/test/SlidePreviewSanitize.test.tsx`,
+  `website/src/test/SlidePreviewCoverage.test.tsx`,
   `website/src/apps/pptx-maker/LibraryPanel.coverage.test.tsx` and
   `website/src/apps/pptx-maker/api.coverage.test.ts`.
 
@@ -30,7 +32,9 @@ change here.
   `license` (`MIT-0`), `tags`, `permissions` (including the twenty
   `@sdpm/*` `mcpTools`), `dependencies`, `platform`, `agents`,
   `defaultEnabled: false` and every display field (`displayName`,
-  `description`, `highlights`, `useCases`, `configuration`).
+  `description`, `highlights`, `useCases`, `configuration`), except the fifth
+  highlight: the built-in's "reveal its folder" became "copy its folder path"
+  (gap 4), in `app.json`, its `l10n` block and all 12 catalogs.
   `tests/test_manifest_contract.py` compares them with the built-in's manifest
   (`tests/fixtures/builtin-app.json`), because adoption refuses a manifest that
   widens a grant or forces the app off.
@@ -223,7 +227,7 @@ locale and `deckViewer.reveal_folder` is gone.
 | `test/test_pptx_maker_engine_source.py` | `tests/test_engine_source.py` | Downloads go through the fake host's verified downloader over the same mocked opener; plus a gateway without the downloader. Dropped: the three `redact_url` cases, the SSL-context and the https-only-redirect cases, which test the host's `asset_downloader` (Kiro Crew keeps them). |
 | `test/test_pptx_maker_{agents,decks,engine,library,paths,preview_tools,soffice_hint,background_tasks}.py`, the two in-package tests | `tests/test_{agents,decks,engine,library,paths,preview_tools,soffice_hint,background_tasks,venv_paths,preview_tool_discovery}.py` | Imports only. `test_agents.py` reads `ui/src/PptxMakerPage.tsx` and no longer skips without it. |
 | (none) | `tests/test_host_seams.py`, `tests/test_no_host_imports.py`, `tests/test_manifest_contract.py` | Every fail-closed path above; only `_host.py` reaches `kiro_crew`, lazily; manifest parity with the built-in, the `l10n` block, repo-relative PNG art, hooks resolve, the skill and agents, the committed bundle importing only host modules (and only level-0 names by name), an adoptable tree. |
-| `website/src/test/PptxMakerPage.test.tsx`, `PptxDeckViewerCov80.test.tsx`, `apps/pptx-maker/LibraryPanel.coverage.test.tsx`, `apps/pptx-maker/api.coverage.test.ts` | `ui/tests/` | Run by vitest with stand-ins for the host SDK (`ui/tests/stubs/`). The deck-start cases assert the chat launcher call (gap 5); the reveal cases became copy-path cases (gap 4); the settings cases expect `/settings`. Plus `ui/tests/externalSeams.test.tsx`: the catalogs, the transport, no private dashboard import, the older-host fallback. |
+| `website/src/test/PptxMakerPage.test.tsx`, `PptxDeckViewerCov80.test.tsx`, `SlidePreviewSanitize.test.tsx`, `SlidePreviewCoverage.test.tsx`, `apps/pptx-maker/LibraryPanel.coverage.test.tsx`, `apps/pptx-maker/api.coverage.test.ts` | `ui/tests/` | Run by vitest with stand-ins for the host SDK (`ui/tests/stubs/`). The two SlidePreview files (the SVG sanitizer, the only place agent-written SVG becomes DOM, and the component's render paths) port with import paths only. The deck-start cases assert the chat launcher call (gap 5); the reveal cases became copy-path cases (gap 4); the settings cases expect `/settings`. Plus `ui/tests/externalSeams.test.tsx`: the catalogs, the transport, no private dashboard import, the older-host fallback. |
 
 `tests/fakehost.py` stands in for the gateway's controls so the suite needs no
 Kiro Crew install; its redaction fake recognises the credential shapes these

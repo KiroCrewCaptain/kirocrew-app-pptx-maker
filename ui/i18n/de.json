@@ -57,7 +57,7 @@
         "highlight_2": "Live-Vorschau jedes Ergebnisses: Briefing, Gliederung, Art-Direction, dann Folien als animiertes SVG, während sie entstehen",
         "highlight_3": "Stile bestimmen die visuelle Stimmung, .pptx-Vorlagen die Struktur, sodass eine Präsentation ein neues Aussehen erhalten kann, ohne Inhalte neu zu schreiben",
         "highlight_4": "Importiere ein eigenes HTML-Stildokument oder eine bestehende .pptx-Vorlage, und der Agent folgt deren Farben, Schriften und Layouts",
-        "highlight_5": "Öffne die fertige Datei oder zeige ihren Ordner an, ohne das Dashboard zu verlassen",
+        "highlight_5": "Lade die fertige Datei herunter oder kopiere ihren Ordnerpfad, ohne das Dashboard zu verlassen",
         "highlight_6": "Kapselt die öffentliche Engine spec-driven-presentation-maker, die in einer per sha256 festgelegten Version geladen wird; nichts von Hand zu installieren",
         "page_label": "PPTX Maker",
         "use_case_1": "Verwandle eine Idee, URL oder einen Ausgangstext in eine echte Präsentation mit Live-Folienvorschau und wiederverwendbaren visuellen Stilen.",

@@ -58,7 +58,7 @@
         "highlight_2": "每份产出都有实时预览：简报、大纲、美术方向，然后是排版过程中以动画 SVG 呈现的幻灯片",
         "highlight_3": "样式决定视觉调性，.pptx 模板决定结构，于是同一份演示文稿可以换皮而不用重写内容",
         "highlight_4": "导入自己的 HTML 样式或现有 .pptx 模板，代理会遵循其中的配色、字体和版式",
-        "highlight_5": "不离开仪表板就能打开成品文件或定位到它所在的文件夹",
+        "highlight_5": "不离开仪表板就能下载成品文件或复制它所在文件夹的路径",
         "highlight_6": "封装公开的 spec-driven-presentation-maker 引擎，按 sha256 锁定的版本拉取；无需手动安装任何东西",
         "page_label": "PPTX Maker"
       },
