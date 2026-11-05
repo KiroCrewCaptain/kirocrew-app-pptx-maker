@@ -500,14 +500,76 @@ class TestRenderAgents:
             assert used <= set(provision.PLACEHOLDERS), (path.name, used)
 
     def test_an_unresolved_placeholder_is_refused(self):
-        """A config that names a literal `{ENGINE_ROOT}` must never be produced."""
+        """A config that names a literal `{APP_DATA}` must never be produced."""
         template = provision.shipped_agent_templates()[0].read_text(encoding="utf-8")
         values = provision.placeholder_values()
-        values.pop(provision.PLACEHOLDER_ENGINE_ROOT)
+        values.pop(provision.PLACEHOLDER_APP_DATA)
         with pytest.raises(ValueError, match="unresolved placeholder"):
             provision.render_agent_template(template, values)
 
-    def test_the_mcp_server_path_finds_the_managed_tool(self, tmp_path: Path):
+    def test_an_empty_host_path_renders_nothing(self, monkeypatch: pytest.MonkeyPatch):
+        """With no ``PATH`` and no off-``PATH`` ``soffice`` there is no ``{HOST_PATH}``,
+        as on the gateway: a ``PATH`` that began with a separator would put the
+        current directory on the MCP server's lookup."""
+        monkeypatch.delenv("PATH", raising=False)
+        with mock.patch.object(provision.engine, "soffice_install_dir", return_value=None):
+            values = provision.placeholder_values()
+            assert provision.PLACEHOLDER_HOST_PATH not in values
+            with pytest.raises(ValueError, match="unresolved placeholder"):
+                _rendered(values)
+
+    def test_the_engine_paths_are_the_ones_paths_derives(self):
+        """The templates spell the engine's location out from ``{APP_DATA}``; a
+        rename in :mod:`backend.paths` that the templates missed would point every
+        agent at a directory the engine is not in."""
+        engine_root = provision.paths.engine_root()
+        for name, data in _rendered():
+            args = data["mcpServers"]["sdpm"]["args"]
+            assert Path(args[args.index("--directory") + 1]) == provision.paths.engine_mcp_dir()
+            for uri in [data["prompt"], *data["resources"]]:
+                target = Path(uri.removeprefix("file://"))
+                assert (
+                    engine_root in target.parents or target.parent == provision.APP_ROOT / "prompts"
+                ), (name, uri)
+
+    def test_each_template_renders_to_the_built_ins_config(self, tmp_path: Path):
+        """The four templates the built-in shipped (``tests/fixtures/builtin-agents``),
+        rendered with the built-in's own placeholder values, and these templates
+        rendered with the host's, are the same config: an adopted user's agents
+        start the same server, from the same engine, with the same prompts.
+
+        Separators are compared folded, since a template joins a subpath to
+        ``{APP_DATA}`` with ``/``. The managed tool dir exists, because the built-in
+        appended it only once it did.
+        """
+        provision.paths.preview_tools_bin().mkdir(parents=True)
+        builtin_values = {
+            "{ENGINE_ROOT}": str(provision.paths.engine_root()),
+            "{ENGINE_MCP_DIR}": str(provision.paths.engine_mcp_dir()),
+            "{APP_PROMPTS}": str(provision.APP_ROOT / "prompts"),
+            "{UV_BIN}": provision.resolve_uv() or "uv",
+            "{TOOLS_PATH}": provision.mcp_tools_path(),
+        }
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "builtin-agents"
+
+        def _folded(node: object) -> object:
+            if isinstance(node, str):
+                return node.replace("\\", "/")
+            if isinstance(node, list):
+                return [_folded(item) for item in node]
+            if isinstance(node, dict):
+                return {key: _folded(value) for key, value in node.items()}
+            return node
+
+        rendered = dict(_rendered())
+        assert sorted(rendered) == sorted(p.name for p in fixtures.glob("*.json"))
+        for name, data in rendered.items():
+            builtin = (fixtures / name).read_text(encoding="utf-8")
+            for placeholder, value in builtin_values.items():
+                builtin = builtin.replace(placeholder, json.dumps(value)[1:-1])
+            assert _folded(data) == _folded(json.loads(builtin)), name
+
+    def test_the_mcp_server_path_finds_the_managed_tool(self):
         """The rendered MCP ``env.PATH`` is the ONLY place a managed tool is visible.
 
         The engine shells out to ``pdftoppm``/``soffice`` by name from inside the MCP
@@ -515,61 +577,52 @@ class TestRenderAgents:
         subprocess. So this asserts the engine's own resolution (``shutil.which``
         against the rendered value).
         """
-        managed = tmp_path / "preview-tools" / "bin"
+        managed = provision.paths.preview_tools_bin()
         managed.mkdir(parents=True)
         tool = _fake_tool(managed, "pdftoppm")
-        with mock.patch.object(provision.paths, "preview_tools_bin", return_value=managed):
-            rendered = _rendered()
-        for name, data in rendered:
+        for name, data in _rendered():
             assert _same_path(shutil.which("pdftoppm", path=_sdpm_env(data)["PATH"]), tool), name
 
     def test_a_system_tool_still_wins_the_engine_lookup(self, tmp_path: Path):
         """Appended, not prepended: the managed launcher is a fallback, not an override."""
         system_dir = tmp_path / "usr-bin"
-        managed = tmp_path / "preview-tools" / "bin"
+        managed = provision.paths.preview_tools_bin()
         system_dir.mkdir(parents=True)
         managed.mkdir(parents=True)
         system_tool = _fake_tool(system_dir, "pdftoppm")
         _fake_tool(managed, "pdftoppm")
-        with (
-            mock.patch.object(provision.paths, "preview_tools_bin", return_value=managed),
-            mock.patch.dict(os.environ, {"PATH": str(system_dir)}, clear=False),
-        ):
+        with mock.patch.dict(os.environ, {"PATH": str(system_dir)}, clear=False):
             _name, data = _rendered()[0]
         assert _same_path(shutil.which("pdftoppm", path=_sdpm_env(data)["PATH"]), system_tool)
 
-    def test_a_windows_shaped_path_survives_json_rendering(self, tmp_path: Path):
+    def test_a_windows_shaped_path_survives_json_rendering(self):
         """A Windows ``PATH`` is full of backslashes, and ``\\U``/``\\A`` are invalid
         JSON escapes — an unescaped substitution makes every rendered config
         unparseable, i.e. no agent configs at all on Windows."""
         win_path = r"C:\Users\me\AppData\Local\Programs\Python;C:\Windows\system32"
-        managed = tmp_path / "preview-tools" / "bin"
-        managed.mkdir(parents=True)
-        with (
-            mock.patch.object(provision.paths, "preview_tools_bin", return_value=managed),
-            mock.patch.dict(os.environ, {"PATH": win_path}, clear=False),
-        ):
+        with mock.patch.dict(os.environ, {"PATH": win_path}, clear=False):
             rendered = _rendered()
         for _name, data in rendered:
             assert win_path in _sdpm_env(data)["PATH"]
 
-    def test_the_rendered_path_never_contains_an_empty_element(self, tmp_path: Path):
+    def test_the_rendered_path_never_contains_an_empty_element(self):
         """An empty ``PATH`` element means the CWD on POSIX — tool resolution would
         then depend on wherever the MCP server happened to be started."""
-        with mock.patch.object(
-            provision.paths, "preview_tools_bin", return_value=tmp_path / "absent"
-        ):
-            rendered = _rendered()
-        for _name, data in rendered:
+        for _name, data in _rendered():
             assert "" not in _sdpm_env(data)["PATH"].split(os.pathsep)
 
     def test_the_prompts_placeholder_points_into_the_app_checkout(self):
         """For an installed app the gateway's install dir IS this checkout, so the
         app-owned prompt resource is read from the repository's own `prompts/`."""
-        wanted = str(provision.APP_ROOT / "prompts")
-        strings = [s for _name, data in _rendered() for s in _json_strings(data)]
-        assert any(wanted in s for s in strings)
-        assert (provision.APP_ROOT / "prompts" / "spec-studio.md").is_file()
+        wanted = provision.APP_ROOT / "prompts" / "spec-studio.md"
+        targets = [
+            Path(s.removeprefix("file://"))
+            for _name, data in _rendered()
+            for s in _json_strings(data)
+            if s.startswith("file://")
+        ]
+        assert wanted in targets
+        assert wanted.is_file()
 
     def test_a_windows_style_path_still_renders_parseable_json(self):
         """A backslash path must be JSON-escaped into the template.
@@ -579,21 +632,16 @@ class TestRenderAgents:
         failed to parse. Simulated rather than skipped so the escaping is pinned
         on every platform.
         """
-        win_root = r"C:\Users\runneradmin\.kiro\crew\apps\pptx-maker\data\vendor\sdpm"
-        with (
-            mock.patch.object(provision.paths, "engine_root", return_value=Path(win_root)),
-            mock.patch.object(
-                provision.paths, "engine_mcp_dir", return_value=Path(win_root + r"\mcp-local")
-            ),
-        ):
+        win_data = r"C:\Users\runneradmin\.kiro\crew\apps\pptx-maker\data"
+        with mock.patch.object(provision.paths, "app_root", return_value=Path(win_data)):
             rendered = _rendered()
         for name, data in rendered:
-            assert any(win_root in s for s in _json_strings(data)), name
+            assert any(win_data in s for s in _json_strings(data)), name
 
     def test_a_quote_in_a_path_cannot_break_out_of_the_json_string(self):
         """The escaping is a real escape, not a backslash special-case."""
         nasty = '/tmp/we"ird\\path'
-        with mock.patch.object(provision.paths, "engine_root", return_value=Path(nasty)):
+        with mock.patch.object(provision.paths, "app_root", return_value=Path(nasty)):
             rendered = _rendered()
         assert len(rendered) == 4
 

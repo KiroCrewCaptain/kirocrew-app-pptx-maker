@@ -11,15 +11,18 @@ installed package (:func:`resolve_uv`) rather than assumed to be on ``PATH``,
 and the engine arrives over plain HTTPS, so ``git`` is not required at all.
 
 **The agents are rendered by the gateway, not here.** The shipped agent
-templates (``agents/*.json``) name runtime paths through placeholders
-(:data:`PLACEHOLDERS`). The gateway substitutes them itself, from values it
-computes, into a file under the data home, whenever it registers the app's
-agents (enable, gateway start). Writing rendered configs from here would put an
-executable path (``{UV_BIN}``) in a file the agent can rewrite, and into this
-app's own checkout, which an update replaces. :func:`render_agent_template` is
-this app's statement of the template contract (what each placeholder means and
-how a value is escaped), pinned by the tests; ``PORTING.md`` gap 1 is the seam
-that would let the gateway read it from the manifest instead.
+templates (``agents/*.json``) name runtime paths through the host placeholders
+every Kiro Crew app's agent templates may use (:data:`PLACEHOLDERS`): the app's
+install root, its data dir, the gateway's ``uv``, the host ``PATH`` and its
+separator. The gateway computes each value itself and renders the template into a
+file under the data home whenever it registers the app's agents (enable, gateway
+start). Writing rendered configs from here would put an executable path
+(``{UV_BIN}``) in a file the agent can rewrite, and into this app's own checkout,
+which an update replaces. :func:`render_agent_template` and
+:func:`placeholder_values` are this app's statement of that contract (what each
+placeholder means and how a value is escaped), pinned by the tests, and the
+templates spell the engine and preview-tool paths out from ``{APP_DATA}`` exactly
+as :mod:`.paths` derives them.
 
 Provisioning is user-triggered (``POST /engine/provision``) and idempotent.
 
@@ -60,40 +63,46 @@ UV_INSTALL_TIMEOUT = 300
 # locator returns a full path, and `shutil.which` applies Windows `PATHEXT`.
 _UV_BASENAME = "uv"
 
-# Placeholders in the shipped agent configs. The engine's absolute location is
-# only known at run time (it lives under the data home), so the configs ship as
-# templates and the gateway renders them.
-PLACEHOLDER_ENGINE_ROOT = "{ENGINE_ROOT}"
-PLACEHOLDER_ENGINE_MCP_DIR = "{ENGINE_MCP_DIR}"
-PLACEHOLDER_APP_PROMPTS = "{APP_PROMPTS}"
+# Placeholders in the shipped agent configs: the host set Kiro Crew computes for
+# every app (app-kit-platform.md "Agent-template placeholders"). A template may use
+# no other, because the gateway renders nothing else and refuses to register an
+# agent with a placeholder left in it.
+#: The app's install root, which for an installed app IS this checkout.
+PLACEHOLDER_APP_ROOT = "{APP_ROOT}"
+#: The app's data dir (``<data home>/apps/pptx-maker/data``), ``paths.app_root()``.
+#: The engine (``vendor/sdpm``) and the managed preview tools
+#: (``vendor/preview-tools/bin``) live under it, and the templates spell those
+#: subpaths out exactly as :mod:`.paths` derives them.
+PLACEHOLDER_APP_DATA = "{APP_DATA}"
 #: ``uv`` is resolved for the SAME reason the engine paths are: it is a declared
-#: Python dependency, so it is always installed, but not necessarily on ``PATH``.
-#: A wheel install puts it in the venv's scripts dir and the gateway may run with a
-#: minimal ``PATH`` (an installed launchd/systemd service), so a bare ``"command":
-#: "uv"`` in an agent config resolved to nothing and every deck generation failed
-#: with executable-not-found. :func:`resolve_uv` already computes the absolute path
-#: for this module's own subprocesses — the agent configs now get the same value.
+#: Python dependency of Kiro Crew, so it is always installed, but not necessarily on
+#: ``PATH``. A wheel install puts it in the venv's scripts dir and the gateway may
+#: run with a minimal ``PATH`` (an installed launchd/systemd service), so a bare
+#: ``"command": "uv"`` in an agent config resolved to nothing and every deck
+#: generation failed with executable-not-found.
 PLACEHOLDER_UV_BIN = "{UV_BIN}"
-#: ``PATH`` for the engine's MCP server, which is the process that actually shells
-#: out to ``pdftoppm``/``soffice`` by name (``skill/sdpm/api.py``). kiro-cli spawns
-#: that server from the rendered agent config, so this is the ONLY place the app can
-#: put its managed tool dir where those lookups will see it — an overlay applied to
-#: a gateway subprocess reaches a different child entirely.
-PLACEHOLDER_TOOLS_PATH = "{TOOLS_PATH}"
+#: The gateway's ``PATH`` plus the fixed install directory of a ``soffice`` a
+#: by-name lookup cannot reach (:func:`host_path`). The MCP server's ``PATH`` is
+#: this, then ``{PATH_SEP}``, then the managed tool dir: the engine shells out to
+#: ``pdftoppm``/``soffice`` by name from inside the MCP server that kiro-cli spawns
+#: from the rendered config, so this is the ONLY place the app can put its managed
+#: tool dir where those lookups will see it.
+PLACEHOLDER_HOST_PATH = "{HOST_PATH}"
+#: ``os.pathsep`` of the gateway's host, so one template serves every platform.
+PLACEHOLDER_PATH_SEP = "{PATH_SEP}"
 
 #: Every placeholder a shipped agent template may carry.
 PLACEHOLDERS: tuple[str, ...] = (
-    PLACEHOLDER_ENGINE_ROOT,
-    PLACEHOLDER_ENGINE_MCP_DIR,
-    PLACEHOLDER_APP_PROMPTS,
+    PLACEHOLDER_APP_ROOT,
+    PLACEHOLDER_APP_DATA,
     PLACEHOLDER_UV_BIN,
-    PLACEHOLDER_TOOLS_PATH,
+    PLACEHOLDER_HOST_PATH,
+    PLACEHOLDER_PATH_SEP,
 )
 
 #: This app's own checkout: the shipped agent templates and prompts live here.
 APP_ROOT = Path(__file__).resolve().parent.parent
 _AGENTS_SUBDIR = "agents"
-_PROMPTS_SUBDIR = "prompts"
 
 # Max captured log characters handed back to the UI.
 LOG_TAIL_CHARS = 4000
@@ -136,39 +145,44 @@ def resolve_uv() -> str | None:
     return _uv_path_cache
 
 
-def mcp_tools_path() -> str:
-    """``PATH`` value for the engine MCP server's ``env`` block.
-
-    The engine resolves ``pdftoppm``/``soffice`` with ``shutil.which()`` inside the
-    MCP server process that kiro-cli spawns, so the app's managed tool directory has
-    to be on THAT process's ``PATH``. Nothing the gateway does to its own
-    subprocesses affects it.
-
-    The managed directory is **appended** to the inherited ``PATH``, so a real
-    system poppler or LibreOffice still wins the engine's own lookup and the managed
-    launcher stays a fallback. Returns the inherited ``PATH`` unchanged when there
-    is no managed directory yet, so rendering never produces an empty entry (an
-    empty element in ``PATH`` means "the current directory" on POSIX, which would
-    make tool resolution depend on the server's cwd).
+def host_path() -> str:
+    """What the gateway renders into ``{HOST_PATH}``: its ``PATH``, plus a ``soffice`` dir.
 
     A tool installed at a fixed platform install root that its installer does not put
-    on ``PATH`` — LibreOffice on Windows — is appended too, from
-    :func:`.engine.system_install_dirs`. Without that entry the engine's own
+    on ``PATH`` — LibreOffice on Windows — is appended after the inherited ``PATH``,
+    from :func:`.engine.soffice_install_dir`. Without that entry the engine's own
     ``shutil.which("soffice")`` cannot see an install the app has already resolved,
-    so ``/deps`` reports LibreOffice present while every thumbnail still fails. It
-    sits before the managed directory and after the inherited ``PATH``: a system tool
-    keeps its precedence over the shim, and nothing already resolvable by name is
-    shadowed.
+    so ``/deps`` reports LibreOffice present while every thumbnail still fails.
+
+    Empty when both are absent. The gateway then renders no ``{HOST_PATH}`` at all
+    and registers none of the agents, rather than a ``PATH`` that starts with a
+    separator (an empty element means "the current directory" on POSIX).
     """
     inherited = os.environ.get("PATH", "")
     entries = [inherited] if inherited else []
     system_dir = engine.soffice_install_dir()
     if system_dir:
         entries.append(system_dir)
-    managed = paths.preview_tools_bin()
-    if managed.is_dir():
-        entries.append(str(managed))
     return os.pathsep.join(entries)
+
+
+def mcp_tools_path() -> str:
+    """``PATH`` value the rendered config gives the engine MCP server.
+
+    The engine resolves ``pdftoppm``/``soffice`` with ``shutil.which()`` inside the
+    MCP server process that kiro-cli spawns, so the app's managed tool directory has
+    to be on THAT process's ``PATH``. Nothing the gateway does to its own
+    subprocesses affects it. The templates spell it
+    ``{HOST_PATH}{PATH_SEP}{APP_DATA}/vendor/preview-tools/bin``.
+
+    The managed directory is **appended** to :func:`host_path`, so a real system
+    poppler or LibreOffice still wins the engine's own lookup and the managed
+    launcher stays a fallback. It is on the ``PATH`` whether or not it exists yet: a
+    missing directory matches nothing, and the launcher the first provision writes
+    is reachable without waiting for the next registration.
+    """
+    entries = [host_path(), str(paths.preview_tools_bin())]
+    return os.pathsep.join(entry for entry in entries if entry)
 
 
 def reset_uv_cache() -> None:
@@ -384,18 +398,22 @@ def _json_escape(value: str) -> str:
 def placeholder_values() -> dict[str, str]:
     """The value each placeholder stands for, computed the way the gateway does.
 
-    The app root's ``prompts/`` is where ``{APP_PROMPTS}`` points: for an
-    installed app the gateway's install directory IS this checkout.
+    ``{APP_ROOT}`` is this checkout: for an installed app the gateway's install
+    directory IS the checkout. ``{HOST_PATH}`` is left out when :func:`host_path`
+    is empty, as the gateway leaves it out, so rendering then refuses.
     """
-    return {
-        PLACEHOLDER_ENGINE_ROOT: str(paths.engine_root()),
-        PLACEHOLDER_ENGINE_MCP_DIR: str(paths.engine_mcp_dir()),
+    values = {
+        PLACEHOLDER_APP_ROOT: str(APP_ROOT),
+        PLACEHOLDER_APP_DATA: str(paths.app_root()),
         # Falls back to the bare name only when uv is genuinely absent, which
         # `provision` already reports as a hard failure.
         PLACEHOLDER_UV_BIN: resolve_uv() or _UV_BASENAME,
-        PLACEHOLDER_TOOLS_PATH: mcp_tools_path(),
-        PLACEHOLDER_APP_PROMPTS: str(APP_ROOT / _PROMPTS_SUBDIR),
+        PLACEHOLDER_PATH_SEP: os.pathsep,
     }
+    host = host_path()
+    if host:
+        values[PLACEHOLDER_HOST_PATH] = host
+    return values
 
 
 def render_agent_template(template: str, values: dict[str, str]) -> dict:
@@ -495,10 +513,9 @@ def provision() -> ProvisionOutcome:
     # `/deps/install` route also preserves the app's rule that no browser request
     # installs a system package.
     #
-    # The gateway renders the agents' `{TOOLS_PATH}` when it registers them (enable,
-    # gateway start), and `mcp_tools_path()` names the managed directory only once
-    # it EXISTS. So the first provision's launcher reaches the engine's MCP server
-    # from the next registration on, as it did in the built-in.
+    # The agents' MCP server `PATH` names the managed directory whether or not it
+    # exists (`mcp_tools_path()`), so the launcher written here reaches the engine's
+    # MCP server at its next start.
     #
     # Best effort: without it the deck still builds, only the thumbnails are
     # missing, so a failure is reported and does not fail provisioning.

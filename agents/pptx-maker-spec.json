@@ -4,15 +4,15 @@
   "mcpServers": {
     "sdpm": {
       "command": "{UV_BIN}",
-      "args": ["run", "--directory", "{ENGINE_MCP_DIR}", "python", "server_acp.py"],
-      "env": { "PYTHONPATH": "", "PATH": "{TOOLS_PATH}" },
+      "args": ["run", "--directory", "{APP_DATA}/vendor/sdpm/mcp-local", "python", "server_acp.py"],
+      "env": { "PYTHONPATH": "", "PATH": "{HOST_PATH}{PATH_SEP}{APP_DATA}/vendor/preview-tools/bin" },
       "timeout": 120000
     }
   },
-  "prompt": "file://{ENGINE_ROOT}/mcp-local/acp-agent-prompts/spec-agent.md",
+  "prompt": "file://{APP_DATA}/vendor/sdpm/mcp-local/acp-agent-prompts/spec-agent.md",
   "resources": [
-    "file://{ENGINE_ROOT}/skill/references/workflows/create-new-1-briefing.md",
-    "file://{APP_PROMPTS}/spec-studio.md"
+    "file://{APP_DATA}/vendor/sdpm/skill/references/workflows/create-new-1-briefing.md",
+    "file://{APP_ROOT}/prompts/spec-studio.md"
   ],
   "tools": [
     "@sdpm/analyze_template", "@sdpm/apply_style", "@sdpm/code_to_slide",

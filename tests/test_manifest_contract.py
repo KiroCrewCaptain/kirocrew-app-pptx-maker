@@ -9,8 +9,10 @@ over unchanged:
   manifest at the commit this was ported from). A widened grant would be held
   back or force the app off, and adoption refuses that;
 - the ``pptx-maker`` skill, now shipped and declared by the app instead of by
-  Kiro Crew, and the four agent templates the built-in shipped, byte for byte
-  (the gateway renders their placeholders, see ``backend/provision.py``);
+  Kiro Crew, and the four agents the built-in shipped. Their templates name the
+  host placeholders the gateway renders for every app, and render to the
+  built-in's configs (``tests/test_provision.py``
+  ``test_each_template_renders_to_the_built_ins_config``);
 - nothing that needs a build at install time, and no symlinks or file names a
   Windows checkout cannot hold;
 - a committed UI bundle that imports only the seven modules the dashboard
@@ -278,15 +280,6 @@ class TestTheManifest(unittest.TestCase):
             name = json.loads((APP_ROOT / rel).read_text(encoding="utf-8"))["name"]
             with self.subTest(agent=name):
                 self.assertIn(f"`{name}`", text)
-
-    def test_the_agent_templates_are_the_built_ins(self) -> None:
-        """Byte for byte: the gateway renders and registers exactly these."""
-        fixtures = APP_ROOT / "tests" / "fixtures" / "builtin-agents"
-        for rel in _manifest()["agents"]:
-            with self.subTest(agent=rel):
-                self.assertEqual(
-                    (APP_ROOT / rel).read_bytes(), (fixtures / Path(rel).name).read_bytes()
-                )
 
     def test_l10n_is_within_the_host_parser_limits(self) -> None:
         """A locale over a limit is dropped by the host, silently for the reader."""
