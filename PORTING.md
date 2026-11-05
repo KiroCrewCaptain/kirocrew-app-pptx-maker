@@ -38,10 +38,15 @@ change here.
   `tests/test_manifest_contract.py` compares them with the built-in's manifest
   (`tests/fixtures/builtin-app.json`), because adoption refuses a manifest that
   widens a grant or forces the app off.
-- The four agent templates, byte for byte (`tests/fixtures/builtin-agents/`), with
-  their `{UV_BIN}` / `{ENGINE_ROOT}` / `{ENGINE_MCP_DIR}` / `{APP_PROMPTS}` /
-  `{TOOLS_PATH}` placeholders, and the app-owned prompt resource
-  `prompts/spec-studio.md` (one section added, see below).
+- The four agents, as the configs they render to. The built-in's templates
+  (`tests/fixtures/builtin-agents/`) named `{ENGINE_ROOT}` / `{ENGINE_MCP_DIR}` /
+  `{APP_PROMPTS}` / `{TOOLS_PATH}`, which only the built-in's own module could
+  compute; these name the host placeholders the gateway computes for every app
+  (`{APP_ROOT}`, `{APP_DATA}`, `{UV_BIN}`, `{HOST_PATH}`, `{PATH_SEP}`) and spell
+  the engine and preview-tool subpaths out from `{APP_DATA}`. Rendered, each is
+  the built-in's config (`tests/test_provision.py`
+  `test_each_template_renders_to_the_built_ins_config`). The app-owned prompt
+  resource `prompts/spec-studio.md` carried over (one section added, see below).
 - Every route's method, validation, status codes, error `code`s and response
   shape. The handler bodies are the built-in's.
 - The security behaviour: the engine is fetched by commit and accepted only when
@@ -120,24 +125,16 @@ without it, and `register_routes` reports the reason through `ctx.health`
 
 ## Remaining gaps
 
-1. **Agent template rendering is the built-in's, by name.** The gateway renders
-   a shipped agent template's placeholders itself, from values it computes, into
-   `<data home>/rendered-agents/` (`src/kiro_crew/apps/bridges_agents.py:773-843`),
-   and it computes them only for this app, by importing the built-in's own
-   modules (`_placeholder_values`, `src/kiro_crew/apps/bridges_agents.py:734-771`;
-   KiroCrew PR #27435 keeps that to a package in `BUILTIN_NAMES`). So this
-   repository's four agents register while Kiro Crew still ships the built-in
-   package, and stop registering (fail closed: "unresolved placeholder — not
-   registered") once it does not. The values are runtime paths only the gateway
-   may compute (`{UV_BIN}` is an executable; an app-written value would let an
-   agent with write access to the engine directory substitute its own binary).
-   Closing this needs an app-agnostic, manifest-declared placeholder seam whose
-   values the gateway derives from closed sources (the app's data dir, its own
-   root, the gateway's `uv`, the inherited `PATH` plus app-data-relative entries).
-   `backend/provision.py` `PLACEHOLDERS` / `render_agent_template` /
-   `placeholder_values` state this app's side of that contract, and
-   `tests/test_provision.py` pins it on every platform's path shapes. **This gap
-   must close before Kiro Crew stops shipping the built-in package.**
+1. **Agent template rendering is the built-in's, by name.** Closed. The gateway
+   renders an app's agent template from a fixed host placeholder set it computes
+   for every app (Kiro Crew `app-kit-platform.md` §34, "Agent-template
+   placeholders"): `{APP_ROOT}`, `{APP_DATA}`, `{UV_BIN}`, `{HOST_PATH}`,
+   `{PATH_SEP}`, never read from a file the app or its agent can write. The
+   built-in instead computed `{ENGINE_ROOT}` and friends in its own
+   `agent_placeholders.py`, which a released record no longer consults, so these
+   templates use only the host set. `backend/provision.py` `PLACEHOLDERS` /
+   `render_agent_template` / `placeholder_values` state this app's side of that
+   contract, and `tests/test_provision.py` pins it on every platform's path shapes.
 2. **The built-in's startup route loop.** While the built-in package is in
    `BUILTIN_NAMES`, the gateway registers its routes straight on the aiohttp
    router at start (`src/kiro_crew/dashboard/routes/system.py:235-241`), ahead of
@@ -223,7 +220,7 @@ locale and `deckViewer.reveal_folder` is gone.
 |---|---|---|
 | `test/test_pptx_maker_routes.py` | `tests/test_routes.py` | Driven through `tests/harness.py`, which serves the records `register_routes` returns the way the gateway's registry does (exact path, then one-segment `{param}` patterns; a raising handler is a 502). `TestDenyByDefault` became `TestRouteRegistration` (the route table, no route on a gateway-owned suffix, structural records, the context bound, no file touched, degraded health on an older host, a fresh context adopted) and `TestDisabledAppServesNothing`. `/config` cases call `/settings`. The audit cases read `ctx.audit` rows. |
 | `test/test_pptx_maker_owner_gate.py` | `tests/test_owner_gate.py` | Through the harness; denials are the context's (`pptx-maker.<verb>`). Plus a gateway without the gate refusing every mutating route. Each async case runs on its own `asyncio.run` loop. |
-| `test/test_pptx_maker_provision.py` | `tests/test_provision.py` | `TestResolveUv` runs against the gateway's resolver and, removed, the restated ladder. `TestRenderAgents` pins `render_agent_template` / `placeholder_values` (no placeholder left or undeclared, Windows paths and quotes, the managed tool on the MCP `PATH`, a system tool winning, `{APP_PROMPTS}` in this checkout) and that provisioning writes nothing into the checkout. Dropped: `TestStageStatic` and the `_register_resources` cases (the code is gone). The shipped-agent `@server` check no longer consults Kiro Crew's private managed-server list (these specs name none). |
+| `test/test_pptx_maker_provision.py` | `tests/test_provision.py` | `TestResolveUv` runs against the gateway's resolver and, removed, the restated ladder. `TestRenderAgents` pins `render_agent_template` / `placeholder_values` (no placeholder left or undeclared, Windows paths and quotes, the managed tool on the MCP `PATH`, a system tool winning, the prompt resource in this checkout, the engine paths `paths` derives, the built-in's rendered configs) and that provisioning writes nothing into the checkout. Dropped: `TestStageStatic` and the `_register_resources` cases (the code is gone). The shipped-agent `@server` check no longer consults Kiro Crew's private managed-server list (these specs name none). |
 | `test/test_pptx_maker_engine_source.py` | `tests/test_engine_source.py` | Downloads go through the fake host's verified downloader over the same mocked opener; plus a gateway without the downloader. Dropped: the three `redact_url` cases, the SSL-context and the https-only-redirect cases, which test the host's `asset_downloader` (Kiro Crew keeps them). |
 | `test/test_pptx_maker_{agents,decks,engine,library,paths,preview_tools,soffice_hint,background_tasks}.py`, the two in-package tests | `tests/test_{agents,decks,engine,library,paths,preview_tools,soffice_hint,background_tasks,venv_paths,preview_tool_discovery}.py` | Imports only. `test_agents.py` reads `ui/src/PptxMakerPage.tsx` and no longer skips without it. |
 | (none) | `tests/test_host_seams.py`, `tests/test_no_host_imports.py`, `tests/test_manifest_contract.py` | Every fail-closed path above; only `_host.py` reaches `kiro_crew`, lazily; manifest parity with the built-in, the `l10n` block, repo-relative PNG art, hooks resolve, the skill and agents, the committed bundle importing only host modules (and only level-0 names by name), an adoptable tree. |

@@ -19,8 +19,8 @@ machine has neither:
 Why one bin dir: the engine resolves both tools with ``shutil.which()`` inside the
 ``sdpm`` MCP server that kiro-cli spawns, so whatever is installed must sit on THAT
 process's ``PATH``. :func:`.paths.preview_tools_bin` is that single directory, and
-:func:`.provision.mcp_tools_path` is what renders it into the agent config's
-``mcpServers.sdpm.env.PATH`` — appended, so a real system tool still wins the
+the agent templates append it to ``mcpServers.sdpm.env.PATH``
+(:func:`.provision.mcp_tools_path`), so a real system tool still wins the
 engine's own lookup.
 
 Everything here is BLOCKING (filesystem) and must run through ``routes.off_loop``.

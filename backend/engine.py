@@ -387,7 +387,8 @@ def soffice_install_dir() -> str | None:
     The engine resolves ``pdftoppm``/``soffice`` with ``shutil.which()`` inside its own
     MCP server process, so a tool whose installer left ``PATH`` alone is invisible
     there even when :func:`optional_dep_path` can point at it.
-    :func:`.provision.mcp_tools_path` appends what this returns, which is what makes
+    :func:`.provision.host_path` appends what this returns (as the gateway does for
+    the agents' ``{HOST_PATH}``), which is what makes
     such an install reachable by the process that rasterizes slides.
 
     A tool already on ``PATH`` contributes nothing, so the rendered ``PATH`` grows only

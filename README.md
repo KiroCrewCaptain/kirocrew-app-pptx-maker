@@ -217,8 +217,7 @@ in that release: the engine, the decks and the library stay where they are.
 Until a user's Kiro Crew does that, it keeps running its built-in copy, and
 nothing here changes what they run. [PORTING.md](PORTING.md) lists every place
 this copy differs from the built-in and why, and every gap that still needs a
-Kiro Crew change; the biggest is that the gateway renders the agents' templates
-from the built-in's own package (gap 1).
+Kiro Crew change.
 
 | Path | What it is |
 |---|---|
@@ -259,11 +258,11 @@ running it unprotected; `register_routes` reports what is missing through the
 app's health. No other backend module names `kiro_crew`
 (`tests/test_no_host_imports.py`).
 
-The agent templates carry `{UV_BIN}`, `{ENGINE_ROOT}`, `{ENGINE_MCP_DIR}`,
-`{APP_PROMPTS}` and `{TOOLS_PATH}`. The gateway fills them in itself when it
-registers the agents; today it does that only while Kiro Crew ships the built-in
-package (PORTING.md gap 1). `backend/provision.py` states the contract
-(`PLACEHOLDERS`, `render_agent_template`), and the tests pin it.
+The agent templates carry only the host placeholders Kiro Crew computes for every
+app: `{APP_ROOT}`, `{APP_DATA}`, `{UV_BIN}`, `{HOST_PATH}` and `{PATH_SEP}`. The
+gateway fills them in itself when it registers the agents. `backend/provision.py`
+states the contract (`PLACEHOLDERS`, `render_agent_template`), and the tests pin
+it.
 
 ### Install from a clone
 
