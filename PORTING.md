@@ -28,7 +28,8 @@ change here.
 
 ## What carried over unchanged
 
-- `app.json` `name` (`pptx-maker`), `version` (`0.3.0`), `author` (`sktok`),
+- `app.json` `name` (`pptx-maker`), `version` (`0.3.0` at the port; a fix
+  released here bumps the patch, see below), `author` (`sktok`),
   `license` (`MIT-0`), `tags`, `permissions` (including the twenty
   `@sdpm/*` `mcpTools`), `dependencies`, `platform`, `agents`,
   `defaultEnabled: false` and every display field (`displayName`,
@@ -214,6 +215,26 @@ strings (`deckViewer.copy_folder_path`, `deckViewer.folder_path_copied`, and the
 five `pptxMakerPage.icon_packs_*` / `install_icon_packs` strings) are in every
 locale and `deckViewer.reveal_folder` is gone.
 
+## Built-in fixes carried over after the port
+
+Fixes kept landing in the built-in after the commit this was ported from, and an
+adopted user runs this repository, not the built-in, so each user-visible one is
+carried here. Up to Kiro Crew `main` `0f93202938` (2026-11-06), released as
+`0.3.1`:
+
+| Kiro Crew commit | Here |
+|---|---|
+| `2f2b74a991` write `pdftoppm.cmd` in the console code page | `backend/preview_tools.py`, `tests/test_preview_tools.py` |
+| `ccf01c8408` keep the old engine when a Windows finalize rollback cannot move the new tree | `backend/engine_source.py`, `tests/test_engine_source.py` |
+| `cff13846b7` keep Start a deck disabled until the engine is ready | `ui/src/PptxMakerPage.tsx`, `ui/tests/PptxMakerPage.test.tsx` |
+| `680fac46c9` install the engine's locked dependencies as pinned (`uv sync --frozen`, `uv run --frozen`) | `backend/provision.py`, `agents/*.json`, `tests/fixtures/builtin-agents/*.json`, `tests/test_provision.py` |
+| `7a4e28199b`, `d2b86d36d5`, `d5abd135e9` (tests only, for this app) | `tests/test_routes.py`, `tests/test_paths.py`, `tests/test_spawn_scope_layers.py`, `tests/test_agents.py`, `tests/test_host_seams.py`, `ui/tests/SplitsNarrow.test.ts` |
+
+The rest of `d2b86d36d5`, `d5abd135e9` and `6f13ecb3ef` moves code from the
+built-in into Kiro Crew's own modules (`soffice_discovery.py`, `os_release.py`,
+`agent_placeholders.py`); this repository already carries its own copy of each
+and no behaviour changed.
+
 ## Tests
 
 | Built-in test | Here | Change |
@@ -258,6 +279,9 @@ loop. Removing the built-in, its skill, its catalog keys and the core references
    `python3 scripts/adoption_pin.py verify`.
 3. The KiroCrewApps row for `pptx-maker` switches from `"type": "builtin"` to
    `"type": "git"`, this URL, `"ref": "C"`, never a branch name.
-4. Check that both files name the same `C`, and that GitHub serves it
+4. The pin's `version` is this `app.json`'s, and adoption also requires the
+   built-in's own `app.json` version to equal it, so a re-pin after a patch
+   release here bumps the wheel copy's version in the same Kiro Crew commit.
+5. Check that both files name the same `C`, and that GitHub serves it
    (`git fetch origin C` in a fresh clone, then `git cat-file -t C` prints
    `commit`).

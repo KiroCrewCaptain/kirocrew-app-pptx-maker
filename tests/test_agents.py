@@ -100,3 +100,20 @@ class TestChatAgentNamesResolve:
         agents = _page_chat_agents()
         assert len(agents) == 3, agents
         assert {a.rsplit("-", 1)[-1] for a in agents} == {"spec", "vibe", "style"}
+
+
+def test_the_bundled_agents_ship_a_welcome_hint() -> None:
+    """Switching to one of this app's agents shows the user what to do first.
+
+    The gateway's spec reader renders ``welcomeMessage`` only when it is a non-empty
+    string, so at least one shipped agent must carry one in that shape.
+    """
+    manifest = json.loads((_APP_DIR / "app.json").read_text(encoding="utf-8"))
+    rendered = {
+        rel: json.loads((_APP_DIR / rel).read_text(encoding="utf-8")).get("welcomeMessage")
+        for rel in manifest.get("agents") or []
+    }
+    assert rendered, "the manifest declares no agents"
+    assert [
+        rel for rel, text in rendered.items() if isinstance(text, str) and text.strip()
+    ], f"no bundled agent ships a welcomeMessage the reader renders: {rendered}"

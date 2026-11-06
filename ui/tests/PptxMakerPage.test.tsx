@@ -390,6 +390,13 @@ function assetsStatus(over: Record<string, unknown> = {}) {
   }
 }
 
+/** The deck-start button for *label*, once the engine gate has opened it. */
+async function enabledModeButton(label: string): Promise<HTMLButtonElement> {
+  const button = (await screen.findByText(label)).closest('button') as HTMLButtonElement
+  await waitFor(() => expect(button.disabled).toBe(false))
+  return button
+}
+
 async function renderPage() {
   const { default: PptxMakerPage } = await import('../src/PptxMakerPage')
   const client = new QueryClient({
@@ -611,7 +618,7 @@ describe('PptxMakerPage', () => {
 
   it('opens a chat on the app agent when a mode is chosen', async () => {
     await renderPage()
-    await userEvent.click(await screen.findByText('Spec mode'))
+    await userEvent.click(await enabledModeButton('Spec mode'))
     // The DECLARED agent name: dispatch resolves the value against each
     // registered config's `name` field, not the `pptx-maker--pptx-maker-spec.json`
     // filename stem the registrar writes. The stem (and the slash namespace form)
@@ -626,10 +633,50 @@ describe('PptxMakerPage', () => {
     })
   })
 
+  it('disables the deck-start buttons until the engine is ready', async () => {
+    // Starting a deck before the engine is installed opens a chat on an engine
+    // agent whose prompt file is not on disk yet, so the first turn fails reading
+    // it. While the engine is not ready the click would fail anyway, so the
+    // buttons stay disabled and no chat is opened.
+    mockApi.engine.mockResolvedValue({
+      ready: false,
+      clone: false,
+      venv: false,
+      pinnedTag: 'v0.3.8',
+      provision: { state: 'idle' as const, log: '', elapsed: 0 },
+    })
+    await renderPage()
+    const specButton = (await screen.findByText('Spec mode')).closest('button')
+    expect(specButton).not.toBeNull()
+    await waitFor(() => expect((specButton as HTMLButtonElement).disabled).toBe(true))
+    await userEvent.click(specButton as HTMLButtonElement)
+    expect(stubOpenChat).not.toHaveBeenCalled()
+  })
+
+  it('enables the deck-start buttons once the engine is ready', async () => {
+    // The default mocked engine is ready, so the buttons are usable.
+    await renderPage()
+    const specButton = (await screen.findByText('Spec mode')).closest('button')
+    expect(specButton).not.toBeNull()
+    await waitFor(() => expect((specButton as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('surfaces an error when the engine status cannot be read, keeping the gate closed', async () => {
+    // The readiness gate fails closed, and the banner renders nothing without
+    // data, so a failed status request would otherwise leave the buttons
+    // disabled with no explanation. Show the failure beside the buttons instead.
+    mockApi.engine.mockRejectedValue(new Error('engine status unavailable'))
+    await renderPage()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('engine status unavailable')
+    const specButton = (await screen.findByText('Spec mode')).closest('button')
+    expect((specButton as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('opens each mode on its own agent', async () => {
     await renderPage()
-    await userEvent.click(await screen.findByText('Vibe mode'))
-    await userEvent.click(screen.getByText('Style creator'))
+    await userEvent.click(await enabledModeButton('Vibe mode'))
+    await userEvent.click(await enabledModeButton('Style creator'))
     expect(stubOpenChat.mock.calls.map(([opts]) => opts?.agent)).toEqual([
       'pptx-maker-vibe',
       'pptx-maker-style',

@@ -357,6 +357,19 @@ export default function PptxMakerPage() {
     queryKey: ['pptx-maker', 'templates'],
     queryFn: () => pptxMakerApi.templates(),
   })
+  // Same query key the banner uses, so this shares the cache rather than adding
+  // a second poll. Starting a deck before the engine is ready opens a chat on an
+  // engine agent whose prompt file is not on disk yet, so the first turn fails;
+  // the deck buttons below stay disabled until `ready`.
+  const engineQuery = useQuery({
+    queryKey: ['pptx-maker', 'engine'],
+    queryFn: () => pptxMakerApi.engine(),
+    refetchInterval: (query) =>
+      query.state.data?.provision.state === 'running' ? POLL_PROVISION_MS : POLL_IDLE_MS,
+  })
+  // Undefined while the first status response is in flight: treat that as
+  // not-ready so a deck cannot start before the engine is confirmed usable.
+  const engineReady = engineQuery.data?.ready ?? false
 
   const filtered = useMemo(() => filterDecks(decks, query), [decks, query])
   const slideTotal = useMemo(
@@ -434,7 +447,7 @@ export default function PptxMakerPage() {
               <div className="flex items-start gap-3 flex-wrap">
                 {CHAT_AGENTS.map((agent) => (
                   <div key={agent} className="flex flex-col gap-1 max-w-[230px]">
-                    <SendBtn onClick={() => startChat(agent)}>
+                    <SendBtn onClick={() => startChat(agent)} disabled={!engineReady}>
                       {agent === 'pptx-maker-style' ? (
                         <Sparkles className="lucide-inline" />
                       ) : (
@@ -448,6 +461,16 @@ export default function PptxMakerPage() {
                   </div>
                 ))}
               </div>
+              {/* The buttons fail closed on an engine-status error, so surface the
+                  failure here (the banner renders nothing without data) with a
+                  handoff, rather than leaving them disabled with no explanation. */}
+              {engineQuery.isError && (
+                <ErrorNotice
+                  className="mt-3"
+                  message={(engineQuery.error as Error).message}
+                  askAgent
+                />
+              )}
             </Card>
 
             <Card className="flex flex-col min-h-0">

@@ -5335,6 +5335,12 @@ function PptxMakerPage() {
 		queryKey: ["pptx-maker", "templates"],
 		queryFn: () => pptxMakerApi.templates()
 	});
+	const engineQuery = useQuery({
+		queryKey: ["pptx-maker", "engine"],
+		queryFn: () => pptxMakerApi.engine(),
+		refetchInterval: (query) => query.state.data?.provision.state === "running" ? POLL_PROVISION_MS : POLL_IDLE_MS
+	});
+	const engineReady = engineQuery.data?.ready ?? false;
 	const filtered = useMemo(() => filterDecks(decks, query), [decks, query]);
 	const slideTotal = useMemo(() => decks.reduce((sum, deck) => sum + deck.slideCount, 0), [decks]);
 	const finishedCount = useMemo(() => decks.filter((deck) => Boolean(deck.pptxUrl)).length, [decks]);
@@ -5401,23 +5407,32 @@ function PptxMakerPage() {
 			}),
 			view === "decks" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsxs(Card, {
 				className: "mb-4",
-				children: [/* @__PURE__ */ jsxs(CardTitle, { children: [
-					i18nT("apps.pptxMaker.pptxMakerPage.start_a_deck"),
-					" ",
-					/* @__PURE__ */ jsx(InfoTip, { text: i18nT("apps.pptxMaker.pptxMakerPage.start_a_deck_tip") })
-				] }), /* @__PURE__ */ jsx("div", {
-					className: "flex items-start gap-3 flex-wrap",
-					children: CHAT_AGENTS.map((agent) => /* @__PURE__ */ jsxs("div", {
-						className: "flex flex-col gap-1 max-w-[230px]",
-						children: [/* @__PURE__ */ jsxs(SendBtn, {
-							onClick: () => startChat(agent),
-							children: [agent === "pptx-maker-style" ? /* @__PURE__ */ jsx(Sparkles, { className: "lucide-inline" }) : /* @__PURE__ */ jsx(MessageSquarePlus, { className: "lucide-inline" }), i18nT(CHAT_AGENT_LABEL_KEY[agent])]
-						}), /* @__PURE__ */ jsx("span", {
-							className: "text-[12px] text-muted",
-							children: i18nT(CHAT_AGENT_HINT_KEY[agent])
-						})]
-					}, agent))
-				})]
+				children: [
+					/* @__PURE__ */ jsxs(CardTitle, { children: [
+						i18nT("apps.pptxMaker.pptxMakerPage.start_a_deck"),
+						" ",
+						/* @__PURE__ */ jsx(InfoTip, { text: i18nT("apps.pptxMaker.pptxMakerPage.start_a_deck_tip") })
+					] }),
+					/* @__PURE__ */ jsx("div", {
+						className: "flex items-start gap-3 flex-wrap",
+						children: CHAT_AGENTS.map((agent) => /* @__PURE__ */ jsxs("div", {
+							className: "flex flex-col gap-1 max-w-[230px]",
+							children: [/* @__PURE__ */ jsxs(SendBtn, {
+								onClick: () => startChat(agent),
+								disabled: !engineReady,
+								children: [agent === "pptx-maker-style" ? /* @__PURE__ */ jsx(Sparkles, { className: "lucide-inline" }) : /* @__PURE__ */ jsx(MessageSquarePlus, { className: "lucide-inline" }), i18nT(CHAT_AGENT_LABEL_KEY[agent])]
+							}), /* @__PURE__ */ jsx("span", {
+								className: "text-[12px] text-muted",
+								children: i18nT(CHAT_AGENT_HINT_KEY[agent])
+							})]
+						}, agent))
+					}),
+					engineQuery.isError && /* @__PURE__ */ jsx(ErrorNotice, {
+						className: "mt-3",
+						message: engineQuery.error.message,
+						askAgent: true
+					})
+				]
 			}), /* @__PURE__ */ jsxs(Card, {
 				className: "flex flex-col min-h-0",
 				children: [

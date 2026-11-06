@@ -247,5 +247,33 @@ class TestDeckRootBranchLogging(unittest.TestCase):
         self.assertTrue(any("home default ->" in m for m in cm.output), cm.output)
 
 
+_EXTENDED_PREFIX = "\\\\?\\"
+
+
+def test_contained_folds_the_prefix_off_a_resolved_candidate(tmp_path: Path, monkeypatch) -> None:
+    """On Windows ``Path.resolve()`` on a file another thread is replacing can come
+    back as ``\\\\?\\C:\\...`` while a directory resolved separately comes back
+    plain, and a containment check comparing the two read the lone prefix as an
+    escape. The prefix is folded on every platform, so this runs anywhere."""
+    root = (tmp_path / "root").resolve()
+    root.mkdir()
+    inside = root / "inside.txt"
+    inside.write_text("x", encoding="utf-8")
+    outside = (tmp_path / "outside").resolve()
+    outside.mkdir()
+    (outside / "f.txt").write_text("x", encoding="utf-8")
+
+    real_resolve = Path.resolve
+
+    def resolve(self: Path, strict: bool = False) -> Path:
+        out = real_resolve(self, strict=strict)
+        return Path(_EXTENDED_PREFIX + str(out)) if out == inside else out
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+    assert paths._contained(inside, root) is not None
+    assert paths._contained(outside / "f.txt", root) is None
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
   "mcpServers": {
     "sdpm": {
       "command": "{UV_BIN}",
-      "args": ["run", "--directory", "{APP_DATA}/vendor/sdpm/mcp-local", "python", "server_acp.py"],
+      "args": ["run", "--frozen", "--directory", "{APP_DATA}/vendor/sdpm/mcp-local", "python", "server_acp.py"],
       "env": { "PYTHONPATH": "", "PATH": "{HOST_PATH}{PATH_SEP}{APP_DATA}/vendor/preview-tools/bin" },
       "timeout": 120000
     }
