@@ -71,7 +71,10 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     (user_cfg / "config.json").write_text(json.dumps({"output_dir": str(tmp_path / "decks")}))
     (user_cfg / "styles" / "owner-brand.html").write_text("<html><body>brand</body></html>")
     (user_cfg / "templates" / "owner-deck.pptx").write_bytes(b"PK\x03\x04owner")
+    # The engine's config dir is `%APPDATA%\sdpm` on Windows and
+    # `$XDG_CONFIG_HOME/sdpm` elsewhere; both point at `user_cfg`.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("APPDATA", str(xdg))
     monkeypatch.delenv("KIROCREW_PPTX_DECK_ROOT", raising=False)
     monkeypatch.setattr(routes, "_audit", lambda *a, **k: None)
     ctx = _host.bound()

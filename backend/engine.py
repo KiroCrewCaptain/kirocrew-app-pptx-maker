@@ -384,7 +384,7 @@ def _soffice_system_install_path() -> str | None:
 def soffice_install_dir() -> str | None:
     """The directory holding a system ``soffice`` that a by-name lookup cannot reach.
 
-    The engine resolves ``pdftoppm``/``soffice`` with ``shutil.which()`` inside its own
+    The engine runs ``pdftoppm``/``soffice`` by name inside its own
     MCP server process, so a tool whose installer left ``PATH`` alone is invisible
     there even when :func:`optional_dep_path` can point at it.
     :func:`.provision.host_path` appends what this returns (as the gateway does for

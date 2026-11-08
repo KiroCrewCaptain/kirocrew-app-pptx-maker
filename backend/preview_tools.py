@@ -16,7 +16,7 @@ machine has neither:
   instruction instead (:func:`soffice_hint`), and the user's own install is
   picked up automatically.
 
-Why one bin dir: the engine resolves both tools with ``shutil.which()`` inside the
+Why one bin dir: the engine runs both tools by bare name, with no shell, inside the
 ``sdpm`` MCP server that kiro-cli spawns, so whatever is installed must sit on THAT
 process's ``PATH``. :func:`.paths.preview_tools_bin` is that single directory, and
 the agent templates append it to ``mcpServers.sdpm.env.PATH``
@@ -28,11 +28,16 @@ Everything here is BLOCKING (filesystem) and must run through ``routes.off_loop`
 
 from __future__ import annotations
 
+import importlib.util
+import io
 import logging
 import os
 import shlex
 import stat
+import struct
 import sys
+import sysconfig
+import zipfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -52,6 +57,13 @@ SOFFICE = "soffice"
 #: is executed by the gateway's own engine children, so nothing else needs to read or
 #: run it — and a file the engine execs must not be group- or world-writable.
 _LAUNCHER_MODE = 0o700
+
+#: ``MAX_PATH``: the Windows launcher reads the line naming its interpreter into a
+#: buffer of this many bytes, and a longer line fails every run.
+_LAUNCHER_LINE_LIMIT = 260
+
+#: A fixed timestamp for the launcher's zip entry, so a reinstall writes the same bytes.
+_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 
 #: Per-OS instruction for the one tool that cannot be auto-installed. Shown by the
 #: UI verbatim; the user runs it themselves, which is the documented contract for
@@ -134,20 +146,34 @@ def _engine_python() -> Path | None:
 def _launcher_paths() -> list[Path]:
     """Every launcher file installed for ``pdftoppm`` on this platform.
 
-    Windows gets a ``.cmd`` because that is what ``shutil.which`` will resolve for
-    a bare ``pdftoppm`` (it honours ``PATHEXT``), and an extensionless shell script
-    is not executable there. POSIX gets the extensionless name poppler uses.
+    Windows gets a ``.exe``. The engine runs a bare ``pdftoppm`` through
+    ``subprocess.run`` with no shell, and ``CreateProcess`` appends only ``.exe`` to
+    a name without an extension: ``PATHEXT`` is honoured by shells and
+    ``shutil.which``, never by ``CreateProcess``, so a ``.cmd`` is not found there.
+    POSIX gets the extensionless name poppler uses.
     """
     bin_dir = paths.preview_tools_bin()
     if platform_compat.IS_WINDOWS:
-        return [bin_dir / f"{PDFTOPPM}.cmd"]
+        return [bin_dir / f"{PDFTOPPM}.exe"]
     return [bin_dir / PDFTOPPM]
 
 
-def _launcher_body(python: Path, shim: Path) -> str:
-    """The launcher script text.
+def _unreachable_launcher_paths() -> list[Path]:
+    """Launcher files in the bin dir that the engine cannot run, removed on install.
 
-    Both forms exec the engine's interpreter against the shim module FILE, not
+    The engine never spawns a ``pdftoppm.cmd`` (see :func:`_launcher_paths`), but
+    ``shutil.which`` honours ``PATHEXT`` and finds one, so ``/deps`` would keep
+    reporting the managed tool present while every thumbnail failed.
+    """
+    if platform_compat.IS_WINDOWS:
+        return [paths.preview_tools_bin() / f"{PDFTOPPM}.cmd"]
+    return []
+
+
+def _launcher_body(python: Path, shim: Path) -> str:
+    """The POSIX launcher script text.
+
+    It execs the engine's interpreter against the shim module FILE, not
     ``-m``: ``-m`` would need the gateway package importable from the engine's
     venv, which it deliberately is not. Arguments are forwarded verbatim so the
     engine's own ``argv`` reaches the shim unaltered.
@@ -166,48 +192,107 @@ def _launcher_body(python: Path, shim: Path) -> str:
     :func:`shlex.quote` (single quotes, with embedded single quotes escaped)
     removes every such expansion.
     """
-    if platform_compat.IS_WINDOWS:
-        # cmd.exe has no quoting function in the stdlib. Double quotes are the
-        # right container for a path with spaces, and `%` is the only character
-        # cmd expands inside them — escaped by doubling. A literal `"` cannot
-        # appear in a Windows path at all, so there is nothing else to escape.
-        # `%*` forwards every argument verbatim.
-        return "@echo off\r\n" f'"{_cmd_escape(str(python))}" "{_cmd_escape(str(shim))}" %*\r\n'
     # `exec` keeps a single process so the engine's `subprocess.run` sees the
     # shim's real exit code, not a wrapper's. `"$@"` forwards argv unaltered.
     return f'#!/bin/sh\nexec {shlex.quote(str(python))} {shlex.quote(str(shim))} "$@"\n'
 
 
-def _cmd_escape(value: str) -> str:
-    """Escape *value* for use inside double quotes in a ``.cmd`` script.
-
-    Only ``%`` needs it: cmd.exe expands ``%VAR%`` and ``%1`` even within double
-    quotes, and doubling the sign is how a literal percent is written.
-    """
-    return value.replace("%", "%%")
+def _launcher_stub_name() -> str:
+    """distlib's console launcher for this machine, chosen the way distlib chooses it."""
+    if sysconfig.get_platform() == "win-arm64":
+        return "t64-arm.exe"
+    return "t64.exe" if struct.calcsize("P") == 8 else "t32.exe"
 
 
-def _launcher_encoding() -> str:
-    """The codec the launcher's interpreter reads it with.
+def _launcher_stub() -> bytes | None:
+    """distlib's console launcher, read from the gateway's own ``pip``, or ``None``.
 
-    ``cmd.exe`` decodes a ``.cmd`` in the console's OEM code page (``chcp``), never
-    UTF-8, and Python's ``oem`` codec is exactly that page on Windows. ``/bin/sh``
-    passes the bytes through, and UTF-8 is what the POSIX path bytes are.
-    """
-    return "oem" if platform_compat.IS_WINDOWS else "utf-8"
-
-
-def _encode_launcher(body: str) -> bytes | None:
-    """*body* in :func:`_launcher_encoding`, or ``None`` when that page cannot spell it.
-
-    Encoded STRICTLY: a path character outside the page would be read back by
-    ``cmd.exe`` as different bytes, so the launcher would point at a path that does
-    not exist while the install reported ready.
+    pip vendors distlib and ships its launcher for every Windows architecture,
+    because it writes every console script on Windows from it. Located through
+    ``find_spec`` so nothing of pip is imported into the gateway.
     """
     try:
-        return body.encode(_launcher_encoding())
-    except UnicodeEncodeError:
+        spec = importlib.util.find_spec("pip")
+    except (ImportError, ValueError):
         return None
+    if spec is None or not spec.submodule_search_locations:
+        return None
+    for location in spec.submodule_search_locations:
+        try:
+            data = (Path(location) / "_vendor" / "distlib" / _launcher_stub_name()).read_bytes()
+        except OSError:
+            continue
+        if data.startswith(b"MZ"):
+            return data
+    return None
+
+
+def _windows_launcher(python: Path, shim: Path) -> tuple[bytes | None, str]:
+    """``pdftoppm.exe`` as bytes, or ``(None, why)`` when no runnable one can be built.
+
+    The layout pip writes for every Windows console script: distlib's launcher, a
+    ``#!"<interpreter>"`` line, then a zip whose ``__main__.py`` runs the shim FILE.
+    The launcher reads that line, runs ``"<interpreter>" "<this .exe>" <args>``,
+    waits, and exits with the child's code; the interpreter runs the zip at the end
+    of the ``.exe``. Nothing in it depends on the engine's Python version.
+
+    The launcher decodes the line as strict UTF-8 and reads at most
+    :data:`_LAUNCHER_LINE_LIMIT` bytes of it, so an interpreter path that breaks
+    either rule is refused here instead of installing a launcher that fails every
+    run.
+    """
+    stub = _launcher_stub()
+    if stub is None:
+        return None, (
+            "the Windows launcher pip ships (pip/_vendor/distlib/"
+            f"{_launcher_stub_name()}) is not in this Kiro Crew install, so "
+            "pdftoppm.exe cannot be built"
+        )
+    try:
+        line = f'#!"{python}"\r\n'.encode("utf-8")
+    except UnicodeEncodeError:
+        line = b""
+    if not line or len(line) > _LAUNCHER_LINE_LIMIT:
+        return None, (
+            "the pdftoppm launcher cannot name the engine interpreter: its path is not "
+            f"valid UTF-8 or is longer than the {_LAUNCHER_LINE_LIMIT} bytes the "
+            "launcher reads. Point KIROCREW_HOME at a shorter path."
+        )
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        # `repr` spells any path as a valid Python literal, quotes and backslashes
+        # included, so the zip's source needs no escaping of its own.
+        source = f"import runpy\nrunpy.run_path({str(shim)!r}, run_name='__main__')\n"
+        bundle.writestr(zipfile.ZipInfo("__main__.py", date_time=_ZIP_EPOCH), source)
+    return stub + line + archive.getvalue(), ""
+
+
+def _launcher_data(python: Path, shim: Path) -> tuple[bytes | None, str]:
+    """The launcher file's bytes for this platform, or ``(None, why)``.
+
+    The POSIX script is encoded STRICTLY in UTF-8, the bytes ``/bin/sh`` passes
+    through: a path that cannot be spelled there would make the launcher point at a
+    path that does not exist while the install reported ready.
+    """
+    if platform_compat.IS_WINDOWS:
+        return _windows_launcher(python, shim)
+    try:
+        return _launcher_body(python, shim).encode("utf-8"), ""
+    except UnicodeEncodeError:
+        return None, (
+            "the pdftoppm launcher cannot be written in utf-8, the encoding its shell "
+            "reads it in: the engine or app path holds a character that encoding cannot "
+            "represent. Point KIROCREW_HOME at a path it can spell."
+        )
+
+
+def _remove(launchers: list[Path]) -> None:
+    """Best-effort removal of launcher files that must not read as installed."""
+    for launcher in launchers:
+        try:
+            launcher.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def pdftoppm_installed() -> bool:
@@ -247,25 +332,17 @@ def install_pdftoppm() -> tuple[bool, str]:
     except OSError as exc:
         return False, f"cannot create {bin_dir}: {exc}"
 
-    data = _encode_launcher(_launcher_body(python, shim))
+    _remove(_unreachable_launcher_paths())
+    data, refusal = _launcher_data(python, shim)
     if data is None:
         # A launcher left from an earlier install points at a path this install
-        # could not spell either, so it is removed rather than reported installed.
-        for launcher in _launcher_paths():
-            try:
-                launcher.unlink(missing_ok=True)
-            except OSError:
-                pass
-        return False, (
-            f"the pdftoppm launcher cannot be written in {_launcher_encoding()}, the "
-            "encoding its shell reads it in: the engine or app path holds a character "
-            "that encoding cannot represent. Point KIROCREW_HOME at a path it can spell."
-        )
+        # could not name either, so it is removed rather than reported installed.
+        _remove(_launcher_paths())
+        return False, refusal
     for launcher in _launcher_paths():
         try:
-            # Bytes, so no newline translation applies: the line endings written
-            # are exactly the ones `_launcher_body` chose, and the `.cmd` form's
-            # `\r\n` stays `\r\n`.
+            # Bytes, so no newline translation applies: the file holds exactly the
+            # bytes `_launcher_data` built, line endings and the `.exe` image alike.
             atomic_write(launcher, data)
             # chmod AFTER the write and before any caller can resolve it, so the
             # launcher is never observable without its exec bit.

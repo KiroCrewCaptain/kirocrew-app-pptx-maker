@@ -64,8 +64,7 @@ def _fake_tool(directory: Path, name: str) -> Path:
     The suffix is not cosmetic. On Windows ``shutil.which`` only resolves a bare
     name against ``PATHEXT``, so an extensionless stub is invisible and the
     assertion fails for a reason that has nothing to do with the ``PATH`` under
-    test. Production has the same constraint, which is why ``preview_tools``
-    installs ``pdftoppm.cmd`` there.
+    test.
     """
     suffix = ".cmd" if sys.platform == "win32" else ""
     tool = directory / f"{name}{suffix}"
