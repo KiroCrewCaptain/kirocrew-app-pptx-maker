@@ -30,5 +30,5 @@ a public open-source project (AWS Samples, MIT-0). It is **not** vendored into
 this repository: it is downloaded as a sha256-pinned source tarball into the app's
 data directory on first use, unmodified, and driven through its own documented MCP
 tools and Python API. The pin lives in `backend/engine_source.py`
-(`ENGINE_TAG` / `ENGINE_COMMIT` / `ENGINE_TARBALL_SHA256`, bumped together), which
-is the single place an engine upgrade is made.
+(`ENGINE_TAG` / `ENGINE_COMMIT` / `ENGINE_TARBALL_SHA256` / `ENGINE_LOCK_SHA256`,
+bumped together), which is the single place an engine upgrade is made.
