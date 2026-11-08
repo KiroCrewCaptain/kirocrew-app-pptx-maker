@@ -71,7 +71,8 @@ change here.
   found where it is and nothing is downloaded again. Decks stay in the engine's
   `output_dir` (`~/.config/sdpm/decks` for a new user, `~/Documents/SDPM-Presentations`
   for one who used the engine before) and the styles, templates and engine config
-  in `$XDG_CONFIG_HOME/sdpm/`, both outside the data home and untouched.
+  in `$XDG_CONFIG_HOME/sdpm/` (`%APPDATA%\sdpm\` on Windows, where the engine
+  reads it), both outside the data home and untouched.
 - The skill's directory name and frontmatter (`name: pptx-maker`,
   `app: pptx-maker`).
 
@@ -234,6 +235,29 @@ The rest of `d2b86d36d5`, `d5abd135e9` and `6f13ecb3ef` moves code from the
 built-in into Kiro Crew's own modules (`soffice_discovery.py`, `os_release.py`,
 `agent_placeholders.py`); this repository already carries its own copy of each
 and no behaviour changed.
+
+## Fixes that land here first
+
+Kiro Crew pins this repository (`src/kiro_crew/apps/adoption-pins.json`), so a
+fix to PPTX Maker lands here first. The wheel copy takes the same change in the
+Kiro Crew commit that moves the pin and the wheel copy's version to the release
+here (Kiro Crew `app-kit-platform.md` section 33, enforced by its PR Hygiene
+`App repo:` line).
+
+| Release | Fix | Here |
+|---|---|---|
+| `0.3.2` | Windows: Kiro Crew read and wrote the engine's `output_dir` in `~/.config/sdpm/config.json`, while the engine reads `%APPDATA%\sdpm\config.json`, so the deck folder never reached it; and the managed `pdftoppm` was a `.cmd`, which the engine's bare `pdftoppm` (run with no shell, so `CreateProcess` appends only `.exe`) never finds, while `/deps` reported it ready | `backend/paths.py`, `backend/preview_tools.py`, `tests/conftest.py`, `tests/test_paths.py`, `tests/test_preview_tools.py`, `tests/test_owner_gate.py` |
+
+In `0.3.2`, `paths.engine_config_path()` mirrors the engine's
+`sdpm.config.get_user_config_dir`, Windows branch included, and the Windows
+launcher is `pdftoppm.exe` in the layout pip writes for a console script
+(distlib's launcher from the gateway's own pip, a `#!` line naming the engine
+interpreter, and a zip that runs the shim). A `~/.config/sdpm/config.json` on
+Windows is not carried over: the engine never read it, so every deck it wrote is
+under its own default, and copying that file's `output_dir` across would point
+both sides at a folder without them. Without pip in the gateway (an install
+such as `uv tool`), or with an engine interpreter path over 260 bytes, the
+install refuses with its reason instead of reporting a launcher that cannot run.
 
 ## Tests
 

@@ -169,7 +169,7 @@ def host_path() -> str:
 def mcp_tools_path() -> str:
     """``PATH`` value the rendered config gives the engine MCP server.
 
-    The engine resolves ``pdftoppm``/``soffice`` with ``shutil.which()`` inside the
+    The engine runs ``pdftoppm``/``soffice`` by name inside the
     MCP server process that kiro-cli spawns, so the app's managed tool directory has
     to be on THAT process's ``PATH``. Nothing the gateway does to its own
     subprocesses affects it. The templates spell it

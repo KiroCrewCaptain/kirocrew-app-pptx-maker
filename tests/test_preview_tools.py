@@ -13,9 +13,11 @@ poppler's naming, and a mocked renderer would assert nothing about that.
 
 from __future__ import annotations
 
+import importlib.machinery
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -138,6 +140,12 @@ class TestShimRefusesRatherThanMisrender:
         )
 
 
+#: Stands in for distlib's console launcher, the one Windows binary in the `.exe`
+#: form. What the launcher does with the file is distlib's; these tests pin the
+#: layout it reads and run the appended zip with a real interpreter.
+_FAKE_STUB = b"MZ\x90\x00 distlib console launcher stand-in"
+
+
 class TestLauncherInstall:
     """The launcher is what makes the shim resolvable as ``pdftoppm``."""
 
@@ -155,6 +163,8 @@ class TestLauncherInstall:
         with (
             mock.patch.object(preview_tools.paths, "preview_tools_bin", return_value=bin_dir),
             mock.patch.object(preview_tools, "_engine_python", return_value=fake_python),
+            # The Windows form reads the RUNNING interpreter's pip; pinned, never the host's.
+            mock.patch.object(preview_tools, "_launcher_stub", return_value=_FAKE_STUB),
         ):
             yield bin_dir, fake_python
 
@@ -170,10 +180,10 @@ class TestLauncherInstall:
         """`-m` would need the gateway package importable from the engine venv."""
         _, fake_python = staged
         assert preview_tools.install_pdftoppm()[0]
-        body = preview_tools._launcher_paths()[0].read_text()
-        assert str(fake_python) in body
-        assert "pdftoppm_shim.py" in body
-        assert " -m " not in body
+        data = preview_tools._launcher_paths()[0].read_bytes()
+        assert str(fake_python).encode("utf-8") in data
+        assert b"pdftoppm_shim.py" in data
+        assert b" -m " not in data
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX exec bit")
     def test_launcher_is_executable_and_not_group_writable(self, staged) -> None:
@@ -228,8 +238,8 @@ class TestLauncherInstall:
         assert "pdftoppm shim:" in result.stderr
 
     def test_the_launcher_is_written_as_bytes_so_line_endings_are_exact(self, staged) -> None:
-        """Text-mode `atomic_write` translates `\\n`, which would make the `.cmd`
-        form's explicit `\\r\\n` into `\\r\\r\\n` on Windows.
+        """Text-mode `atomic_write` translates `\\n` on Windows, which would make the
+        `.exe` form's `\\r\\n` line `\\r\\r\\n` and corrupt its executable image.
 
         Asserts on the call rather than the file, because the translation only
         happens on Windows and this suite has to catch the regression everywhere.
@@ -242,72 +252,149 @@ class TestLauncherInstall:
         ), "the launcher must be written as bytes so its line endings are exact"
 
     @staticmethod
-    def _install_as_windows(tmp_path: Path, folder: str, code_page: str):
-        """Install the `.cmd` form for an engine interpreter under *folder*.
+    def _install_as_windows(bin_dir: Path, python: Path, stub: bytes | None = _FAKE_STUB):
+        """Install the Windows form, with *stub* standing in for distlib's launcher.
 
-        `cmd.exe` and the `oem` codec exist only on Windows, so the Windows branch
-        is selected and a concrete OEM page stands in for `oem`. Returns the
-        install result, the launcher path and the interpreter path.
+        Returns the install result, the launcher path and what
+        ``pdftoppm_installed`` then reports.
         """
-        base = tmp_path / folder
-        bin_dir = base / "bin"
-        python = base / "venv" / "Scripts" / "python.exe"
         with (
             mock.patch.object(preview_tools.platform_compat, "IS_WINDOWS", True),
-            mock.patch.object(preview_tools, "_launcher_encoding", return_value=code_page),
+            mock.patch.object(preview_tools, "_launcher_stub", return_value=stub),
             mock.patch.object(preview_tools.paths, "preview_tools_bin", return_value=bin_dir),
             mock.patch.object(preview_tools, "_engine_python", return_value=python),
         ):
             result = preview_tools.install_pdftoppm()
             launcher = preview_tools._launcher_paths()[0]
-        return result, launcher, python
+            installed = preview_tools.pdftoppm_installed()
+        return result, launcher, installed
 
-    def test_windows_launcher_is_written_in_the_console_code_page(self, tmp_path: Path) -> None:
-        """`cmd.exe` reads a `.cmd` in the OEM code page, so a UTF-8 `é` (two bytes)
-        reads back as two other characters and the path lookup fails."""
-        (ok, message), launcher, python = self._install_as_windows(tmp_path, "pt_café", "cp437")
+    def test_windows_launcher_is_an_exe_for_the_engines_bare_name(self, tmp_path: Path) -> None:
+        """The engine runs a bare ``pdftoppm`` with no shell, and ``CreateProcess``
+        appends only ``.exe``, so a ``.cmd`` launcher is never found there.
+
+        The file is laid out the way pip lays out a Windows console script: the
+        launcher, a ``#!"<interpreter>"`` line, then a zip starting right after it,
+        whose ``__main__.py`` runs the shim file.
+        """
+        python = tmp_path / "venv" / "Scripts" / "python.exe"
+        (ok, message), launcher, installed = self._install_as_windows(tmp_path / "bin", python)
         assert ok, message
-        assert launcher.name == "pdftoppm.cmd"
+        assert launcher.name == "pdftoppm.exe"
+        assert installed is True
         data = launcher.read_bytes()
+        line = f'#!"{python}"\r\n'.encode("utf-8")
+        assert data.startswith(_FAKE_STUB + line + b"PK\x03\x04")
+        with zipfile.ZipFile(launcher) as bundle:
+            source = bundle.read("__main__.py").decode("utf-8")
         shim = Path(preview_tools.__file__).resolve().parent / "pdftoppm_shim.py"
-        expected = f'@echo off\r\n"{python}" "{shim}" %*\r\n'.encode("cp437")
-        assert data == expected
-        assert "café".encode("cp437") in data
-        assert "café".encode("utf-8") not in data
+        assert f"runpy.run_path({str(shim)!r}, run_name='__main__')" in source
 
-    def test_windows_launcher_refuses_a_path_the_code_page_cannot_spell(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        "folder", ["has space", "has'quote", "pt_café"], ids=["space", "quote", "non-ascii"]
+    )
+    def test_the_appended_zip_runs_the_shim_with_a_real_interpreter(
+        self, tmp_path: Path, folder: str
     ) -> None:
-        """A launcher pointing at a misread path would install 'ready' and never run."""
-        (ok, message), launcher, _ = self._install_as_windows(tmp_path, "pt_日本", "cp437")
-        assert ok is False
-        assert "cp437" in message
-        assert "KIROCREW_HOME" in message
-        assert not launcher.exists()
+        """At run time the launcher starts ``"<interpreter>" "<the .exe>" <args>``.
 
-    def test_a_refused_install_removes_the_earlier_launcher(self, tmp_path: Path) -> None:
-        """An earlier launcher must not keep the tool reported installed."""
-        stale = tmp_path / "pt_日本" / "bin" / "pdftoppm.cmd"
+        Done here directly, so a real interpreter has to find the zip behind the
+        launcher and the ``#!`` line, and the shim has to render a real PDF from the
+        engine's own argv.
+        """
+        base = tmp_path / folder
+        (ok, message), launcher, _ = self._install_as_windows(base / "bin", base / "python.exe")
+        assert ok, message
+        source = _make_pdf(base / "deck.pdf", pages=2)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(launcher),
+                "-png",
+                "-scale-to",
+                "64",
+                str(source),
+                str(base / "out" / "page"),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert sorted(p.name for p in (base / "out").iterdir()) == ["page-1.png", "page-2.png"]
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="CreateProcess resolves the name")
+    def test_the_engines_bare_name_runs_the_installed_exe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole Windows path: pip's own launcher, then a bare ``pdftoppm`` run the
+        way the engine runs it (``subprocess.run``, no shell, so ``CreateProcess``
+        resolves the name on this process's ``PATH``), then a real render."""
+        bin_dir = tmp_path / "bin"
+        with (
+            mock.patch.object(preview_tools.paths, "preview_tools_bin", return_value=bin_dir),
+            mock.patch.object(preview_tools, "_engine_python", return_value=Path(sys.executable)),
+        ):
+            ok, message = preview_tools.install_pdftoppm()
+        assert ok, message
+        monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")]))
+        source = _make_pdf(tmp_path / "slides.pdf", pages=2)
+        result = subprocess.run(
+            ["pdftoppm", "-png", "-scale-to", "64", str(source), str(tmp_path / "out" / "page")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["page-1.png", "page-2.png"]
+
+    def test_a_cmd_launcher_never_reads_as_installed_and_is_removed(self, tmp_path: Path) -> None:
+        """``shutil.which``, and so ``/deps``, finds a ``.cmd`` the engine cannot spawn."""
+        bin_dir = tmp_path / "bin"
+        stale = bin_dir / "pdftoppm.cmd"
         stale.parent.mkdir(parents=True)
         stale.write_bytes(b"@echo off\r\n")
-        (ok, _), launcher, _ = self._install_as_windows(tmp_path, "pt_日本", "cp437")
-        assert ok is False
-        assert launcher == stale
-        assert not stale.exists()
+        with (
+            mock.patch.object(preview_tools.platform_compat, "IS_WINDOWS", True),
+            mock.patch.object(preview_tools.paths, "preview_tools_bin", return_value=bin_dir),
+        ):
+            assert preview_tools.pdftoppm_installed() is False
+        (ok, message), _, installed = self._install_as_windows(bin_dir, tmp_path / "python.exe")
+        assert ok and installed, message
+        assert sorted(p.name for p in bin_dir.iterdir()) == ["pdftoppm.exe"]
 
-    @pytest.mark.skipif(sys.platform != "win32", reason="the oem codec exists only on Windows")
-    def test_windows_launcher_uses_the_oem_codec(self, staged) -> None:
-        _, fake_python = staged
-        assert preview_tools.install_pdftoppm()[0]
-        shim = Path(preview_tools.__file__).resolve().parent / "pdftoppm_shim.py"
-        body = f'@echo off\r\n"{fake_python}" "{shim}" %*\r\n'
-        assert preview_tools._launcher_paths()[0].read_bytes() == body.encode("oem")
+    def test_windows_install_refuses_without_pips_launcher(self, tmp_path: Path) -> None:
+        """No ``.exe`` can be built, and an earlier one must not keep reading as installed."""
+        bin_dir = tmp_path / "bin"
+        earlier = bin_dir / "pdftoppm.exe"
+        earlier.parent.mkdir(parents=True)
+        earlier.write_bytes(_FAKE_STUB)
+        (ok, message), _, installed = self._install_as_windows(
+            bin_dir, tmp_path / "python.exe", stub=None
+        )
+        assert ok is False
+        assert "pip" in message
+        assert installed is False
+        assert not earlier.exists()
+
+    def test_windows_install_refuses_a_line_the_launcher_cannot_read(self, tmp_path: Path) -> None:
+        """The launcher reads its ``#!`` line in a 260-byte window; a longer one would
+        install ready and fail every run."""
+        python = tmp_path / ("x" * 250) / "python.exe"
+        (ok, message), launcher, installed = self._install_as_windows(tmp_path / "bin", python)
+        assert ok is False
+        assert "KIROCREW_HOME" in message
+        assert installed is False
+        assert not launcher.exists()
 
     def test_install_is_idempotent(self, staged) -> None:
         assert preview_tools.install_pdftoppm()[0]
-        first = preview_tools._launcher_paths()[0].read_text()
+        first = preview_tools._launcher_paths()[0].read_bytes()
         assert preview_tools.install_pdftoppm()[0]
-        assert preview_tools._launcher_paths()[0].read_text() == first
+        assert preview_tools._launcher_paths()[0].read_bytes() == first
 
     def test_refuses_before_the_engine_venv_exists(self, tmp_path: Path) -> None:
         """Writing a launcher pointing at a missing interpreter would fail later."""
@@ -320,6 +407,50 @@ class TestLauncherInstall:
             ok, message = preview_tools.install_pdftoppm()
         assert ok is False
         assert "engine" in message.lower()
+
+
+class TestLauncherStub:
+    """distlib's console launcher is read from the gateway's own pip."""
+
+    @staticmethod
+    def _pip_with(tmp_path: Path, data: bytes) -> importlib.machinery.ModuleSpec:
+        package = tmp_path / "pip"
+        stub = package / "_vendor" / "distlib" / preview_tools._launcher_stub_name()
+        stub.parent.mkdir(parents=True)
+        stub.write_bytes(data)
+        spec = importlib.machinery.ModuleSpec("pip", None, is_package=True)
+        spec.submodule_search_locations = [str(package)]
+        return spec
+
+    def test_reads_the_launcher_pip_vendors(self, tmp_path: Path) -> None:
+        spec = self._pip_with(tmp_path, b"MZ launcher")
+        with mock.patch.object(
+            preview_tools.importlib.util, "find_spec", return_value=spec
+        ) as find:
+            assert preview_tools._launcher_stub() == b"MZ launcher"
+        find.assert_called_once_with("pip")
+
+    def test_a_file_that_is_not_an_executable_image_is_not_used(self, tmp_path: Path) -> None:
+        spec = self._pip_with(tmp_path, b"#!/bin/sh\n")
+        with mock.patch.object(preview_tools.importlib.util, "find_spec", return_value=spec):
+            assert preview_tools._launcher_stub() is None
+
+    def test_no_pip_means_no_launcher(self) -> None:
+        with mock.patch.object(preview_tools.importlib.util, "find_spec", return_value=None):
+            assert preview_tools._launcher_stub() is None
+
+    @pytest.mark.parametrize(
+        "platform_tag,pointer,name",
+        [("win-amd64", 8, "t64.exe"), ("win-arm64", 8, "t64-arm.exe"), ("win32", 4, "t32.exe")],
+    )
+    def test_the_launcher_matches_the_machine_as_distlib_picks_it(
+        self, platform_tag: str, pointer: int, name: str
+    ) -> None:
+        with (
+            mock.patch.object(preview_tools.sysconfig, "get_platform", return_value=platform_tag),
+            mock.patch.object(preview_tools.struct, "calcsize", return_value=pointer),
+        ):
+            assert preview_tools._launcher_stub_name() == name
 
 
 class TestSofficeIsReportedNotInstalled:

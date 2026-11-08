@@ -7,9 +7,10 @@ such loader, so the app root is put on the path for the test session only.
 Every test runs against :class:`fakehost.FakeHost` (the host controls
 ``backend/_host.py`` resolves) and a bound :class:`fakehost.FakeCtx` whose
 ``data_dir`` is a fresh temporary directory, so no test reads or writes a real
-data home and none needs Kiro Crew installed. ``XDG_CONFIG_HOME`` (where the
-engine keeps its config) and the deck-root override are pointed at temporary
-directories too, so no test sees the machine's own engine config.
+data home and none needs Kiro Crew installed. ``XDG_CONFIG_HOME`` and
+``APPDATA`` (where the engine keeps its config, on POSIX and on Windows) and the
+deck-root override are pointed at temporary directories too, so no test sees the
+machine's own engine config.
 """
 
 from __future__ import annotations
@@ -53,7 +54,9 @@ def app_ctx(
 ) -> Iterator[FakeCtx]:
     """A bound app context whose data dir is a fresh temporary directory."""
     ctx = FakeCtx(data_dir=tmp_path_factory.mktemp("pptx-maker-data"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
+    config_home = tmp_path_factory.mktemp("xdg")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("APPDATA", str(config_home))
     monkeypatch.delenv("KIROCREW_PPTX_DECK_ROOT", raising=False)
     monkeypatch.delenv("KIROCREW_PPTX_ENGINE_URL", raising=False)
     previous = _host.bound()

@@ -19,8 +19,19 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from backend import paths
+
+
+def _config_home(base: Path):
+    """Point the engine's config dir at *base* on every OS.
+
+    The engine reads ``%APPDATA%`` on Windows and ``$XDG_CONFIG_HOME`` elsewhere,
+    so a test that redirected only one of them would read or write the host's real
+    engine config on the other.
+    """
+    return mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(base), "APPDATA": str(base)})
 
 
 class _DeckRootFixture(unittest.TestCase):
@@ -160,9 +171,7 @@ class TestDeckRootResolution(_DeckRootFixture):
         os.environ.pop(paths.DECK_ROOT_ENV, None)
         configured = self.tmp / "from-config"
         configured.mkdir()
-        prev_xdg = os.environ.get("XDG_CONFIG_HOME")
-        os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "cfg")
-        try:
+        with _config_home(self.tmp / "cfg"):
             config_path = paths.engine_config_path()
             config_path.parent.mkdir(parents=True, exist_ok=True)
             # Serialized with json.dumps, not "%s"-interpolated: a Windows temp
@@ -171,34 +180,20 @@ class TestDeckRootResolution(_DeckRootFixture):
             # asserted the ~/Documents FALLBACK instead of the configured dir.
             # Both production writers (routes.save, provision._seed_deck_root)
             # use json.dumps, so this now matches what the app actually writes.
-            config_path.write_text(
-                json.dumps({"output_dir": str(configured)}), encoding="utf-8"
-            )
+            config_path.write_text(json.dumps({"output_dir": str(configured)}), encoding="utf-8")
             self.assertEqual(paths.deck_root(), configured.resolve())
-        finally:
-            if prev_xdg is None:
-                os.environ.pop("XDG_CONFIG_HOME", None)
-            else:
-                os.environ["XDG_CONFIG_HOME"] = prev_xdg
 
     def test_malformed_engine_config_falls_back(self) -> None:
         """A corrupt engine config must not raise — the UI still needs a path to
         show, and a broken config is a recoverable state, not a 500."""
         os.environ.pop(paths.DECK_ROOT_ENV, None)
-        prev_xdg = os.environ.get("XDG_CONFIG_HOME")
-        os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "cfg2")
-        try:
+        with _config_home(self.tmp / "cfg2"):
             config_path = paths.engine_config_path()
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text("{not json", encoding="utf-8")
             self.assertEqual(
                 paths.deck_root(), (Path.home() / paths.ENGINE_DEFAULT_DECK_ROOT).resolve()
             )
-        finally:
-            if prev_xdg is None:
-                os.environ.pop("XDG_CONFIG_HOME", None)
-            else:
-                os.environ["XDG_CONFIG_HOME"] = prev_xdg
 
 
 class TestDeckRootBranchLogging(unittest.TestCase):
@@ -210,18 +205,15 @@ class TestDeckRootBranchLogging(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self._prev_env = os.environ.get(paths.DECK_ROOT_ENV)
-        self._prev_xdg = os.environ.get("XDG_CONFIG_HOME")
-        os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "cfg")
+        home = _config_home(self.tmp / "cfg")
+        home.start()
+        self.addCleanup(home.stop)
 
     def tearDown(self) -> None:
-        for key, prev in (
-            (paths.DECK_ROOT_ENV, self._prev_env),
-            ("XDG_CONFIG_HOME", self._prev_xdg),
-        ):
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
+        if self._prev_env is None:
+            os.environ.pop(paths.DECK_ROOT_ENV, None)
+        else:
+            os.environ[paths.DECK_ROOT_ENV] = self._prev_env
 
     def test_override_branch_is_logged(self) -> None:
         os.environ[paths.DECK_ROOT_ENV] = str(self.tmp / "decks")
@@ -273,6 +265,65 @@ def test_contained_folds_the_prefix_off_a_resolved_candidate(tmp_path: Path, mon
 
     assert paths._contained(inside, root) is not None
     assert paths._contained(outside / "f.txt", root) is None
+
+
+class TestEngineConfigPathFollowsTheEngine(unittest.TestCase):
+    """``engine_config_path`` names the file ``sdpm.config.get_config`` reads.
+
+    The engine reads ``%APPDATA%\\sdpm\\config.json`` on Windows. Resolving the
+    POSIX location there would store ``output_dir`` in a file the engine never
+    opens, so the engine would write decks to its own default while the app lists
+    and previews another folder.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.appdata = self.tmp / "AppData-Roaming"
+        self.xdg = self.tmp / "xdg"
+
+    def _env(self):
+        env = {"APPDATA": str(self.appdata), "XDG_CONFIG_HOME": str(self.xdg)}
+        return mock.patch.dict(os.environ, env)
+
+    def test_windows_resolves_under_appdata(self) -> None:
+        with mock.patch.object(paths.platform_compat, "IS_WINDOWS", True), self._env():
+            self.assertEqual(paths.engine_config_path(), self.appdata / "sdpm" / "config.json")
+
+    def test_windows_without_appdata_uses_the_roaming_default(self) -> None:
+        with (
+            mock.patch.object(paths.platform_compat, "IS_WINDOWS", True),
+            self._env(),
+            mock.patch.object(paths.Path, "home", return_value=self.tmp),
+        ):
+            os.environ.pop("APPDATA")
+            self.assertEqual(
+                paths.engine_config_path(),
+                self.tmp / "AppData" / "Roaming" / "sdpm" / "config.json",
+            )
+
+    def test_posix_resolves_under_xdg_config_home(self) -> None:
+        with mock.patch.object(paths.platform_compat, "IS_WINDOWS", False), self._env():
+            self.assertEqual(paths.engine_config_path(), self.xdg / "sdpm" / "config.json")
+
+    def test_windows_deck_root_reads_the_engines_output_dir(self) -> None:
+        """The deck root comes from the file the engine reads, not the POSIX one."""
+        engine_decks = self.tmp / "engine-decks"
+        stale_decks = self.tmp / "stale-decks"
+        for config, decks in (
+            (self.appdata / "sdpm" / "config.json", engine_decks),
+            (self.tmp / ".config" / "sdpm" / "config.json", stale_decks),
+        ):
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"output_dir": str(decks)}), encoding="utf-8")
+        with (
+            mock.patch.object(paths.platform_compat, "IS_WINDOWS", True),
+            self._env(),
+            mock.patch.object(paths.Path, "home", return_value=self.tmp),
+        ):
+            os.environ.pop("XDG_CONFIG_HOME")
+            os.environ.pop(paths.DECK_ROOT_ENV, None)
+            self.assertEqual(paths.deck_root(), engine_decks.resolve())
 
 
 if __name__ == "__main__":

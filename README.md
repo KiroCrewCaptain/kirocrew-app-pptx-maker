@@ -160,7 +160,7 @@ just installed.
 - **Where your data lives:** decks are folders in the **Deck output directory**
   (`~/.config/sdpm/decks` unless you change it, or `~/Documents/SDPM-Presentations`
   if you used the engine before). Your styles, templates and the engine's settings
-  are in `~/.config/sdpm/`. The engine itself is in
+  are in `~/.config/sdpm/` (`%APPDATA%\sdpm\` on Windows). The engine itself is in
   `~/.kiro/crew/apps/pptx-maker/data/` (or in the same place under the folder you
   chose for Kiro Crew's data, if you moved it).
 - **What goes over the internet:** **Install engine** downloads the

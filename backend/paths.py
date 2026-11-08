@@ -112,8 +112,8 @@ def preview_tools_root() -> Path:
 def preview_tools_bin() -> Path:
     """The single directory prepended to ``PATH`` for engine spawns.
 
-    The engine resolves both binaries with ``shutil.which()``, so a managed
-    install is only reachable if it is on the child's ``PATH``. Every managed
+    The engine runs both binaries by bare name, so a managed install is only
+    reachable if it is on the child's ``PATH``. Every managed
     tool therefore exposes its executable here — as the real file or a link to
     it inside its own unpacked tree — so exactly one directory has to be
     injected no matter how many tools are managed.
@@ -132,8 +132,24 @@ def engine_skill_dir() -> Path:
 
 
 def engine_config_path() -> Path:
-    """The engine's user ``config.json`` (mirrors its own config resolution)."""
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    """The engine's user ``config.json``, at the path the engine itself reads.
+
+    Mirrors ``sdpm.config.get_user_config_dir``, platform branch included: the
+    engine reads ``%APPDATA%\\sdpm`` on Windows (``~/AppData/Roaming`` when unset)
+    and ``$XDG_CONFIG_HOME/sdpm`` (``~/.config``) everywhere else. Every reader and
+    writer of ``output_dir`` goes through this one path, so resolving the POSIX
+    location on Windows would store the deck folder in a file the engine never
+    opens: the engine would write decks to its own default while this app listed
+    and previewed another folder.
+
+    Derived here rather than asked of the engine (:func:`.engine.user_config_dir`)
+    because :func:`deck_root` reads it on every deck request and must answer before
+    the engine is provisioned.
+    """
+    if platform_compat.IS_WINDOWS:
+        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
     return base.expanduser() / _ENGINE_DIRNAME / "config.json"
 
 
