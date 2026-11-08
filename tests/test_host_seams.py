@@ -227,6 +227,39 @@ class TestDownloadAndAudit:
         _host.audit("style_import", "ok", resources="brand")
 
 
+_TEMPLATE_VALUES = "kiro_crew.apps.agent_template_values"
+
+
+class TestTemplateValues:
+    """What the gateway renders into the agents' ``{HOST_PATH}`` and ``{UV_BIN}``.
+
+    Not a security control, so a gateway without them is not refused: it renders its
+    own ``PATH`` and its resolver's ``uv``, and this app restates that.
+    """
+
+    def test_an_older_gateway_offers_no_host_path(self) -> None:
+        assert _host.template_host_path() is None
+
+    def test_the_gateways_host_path_is_returned(self, fake_host) -> None:
+        fake_host.table[(_TEMPLATE_VALUES, "host_path")] = lambda: "/fixed/a:/fixed/b"
+        assert _host.template_host_path() == "/fixed/a:/fixed/b"
+
+    def test_a_host_path_that_is_not_a_string_reads_as_absent(self, fake_host) -> None:
+        fake_host.table[(_TEMPLATE_VALUES, "host_path")] = lambda: ["/fixed/a"]
+        assert _host.template_host_path() is None
+
+    def test_an_older_gateways_uv_is_its_resolvers(self) -> None:
+        assert _host.template_uv_bin() == "/opt/fake-host/bin/uv"
+
+    def test_the_gateways_uv_value_is_returned(self, fake_host) -> None:
+        fake_host.table[(_TEMPLATE_VALUES, "uv_bin")] = lambda: "/opt/crew-venv-current/bin/uv"
+        assert _host.template_uv_bin() == "/opt/crew-venv-current/bin/uv"
+
+    def test_a_gateway_without_uv_offers_none(self, fake_host) -> None:
+        fake_host.table[(_TEMPLATE_VALUES, "uv_bin")] = lambda: None
+        assert _host.template_uv_bin() is None
+
+
 def test_the_host_lookup_treats_any_import_failure_as_absent(real_host_attr) -> None:
     """The real lookup, not the fake: a module that does not import is "not provided"."""
     real = real_host_attr

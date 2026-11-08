@@ -71,7 +71,8 @@ change here.
   found where it is and nothing is downloaded again. Decks stay in the engine's
   `output_dir` (`~/.config/sdpm/decks` for a new user, `~/Documents/SDPM-Presentations`
   for one who used the engine before) and the styles, templates and engine config
-  in `$XDG_CONFIG_HOME/sdpm/`, both outside the data home and untouched.
+  in `$XDG_CONFIG_HOME/sdpm/` (`%APPDATA%\sdpm\` on Windows, where the engine
+  reads it), both outside the data home and untouched.
 - The skill's directory name and frontmatter (`name: pptx-maker`,
   `app: pptx-maker`).
 
@@ -94,6 +95,7 @@ change here.
 | `provision._register_resources` calling the private `kiro_crew.apps.bridges.register_app` (`backend/provision.py:491-528`) | Removed | Provisioning already did not call it (the gateway registers on enable and at start); it was kept only as a test seam. |
 | `kiro_crew.atomic_write.atomic_write`, `kiro_crew.platform_compat.{IS_WINDOWS, strip_extended_length_prefix, chmod_safe}`, `kiro_crew.subprocess_utf8.UTF8_TEXT`, `kiro_crew.browser_cli.os_deps.{os_release_ids, rpm_package_manager}` | `backend/_fs.py`, `backend/_compat.py`, `engine.UTF8_TEXT`, `backend/_os_deps.py` | Small and carrying no security decision, so restated (see gap 6). |
 | `kiro_crew.env.resolve_uv` (`backend/provision.py:45`) | The gateway's resolver through `_host.resolve_uv`, with the same ladder restated for a gateway without it | The gateway renders the same value into the agents' `{UV_BIN}`, so the two must agree. |
+| (none) | `kiro_crew.apps.agent_template_values.{host_path, uv_bin}` through `_host.template_host_path` / `_host.template_uv_bin`; on a gateway without them, its own `PATH` (plus the off-`PATH` `soffice` dir) and its resolver's `uv`, as that gateway renders | `placeholder_values` and `/deps` state what the gateway renders into `{HOST_PATH}` and `{UV_BIN}`. Not a security control, so a gateway without them refuses nothing. |
 | `iconUrl` / `hero*` as absolute `/app-assets/pptx-maker/*.svg`, `screenshots` `/app-assets/…` (`app.json:85-99`) | `iconPath` / `hero*` / `screenshots` as repo-relative PNGs under `assets/` | A registry app's art is repo-relative, and the catalog's publish step refuses SVG for a non-builtin source. The PNGs were rendered from the built-in SVGs (kept beside them): the icon at 512×512 on an opaque tile with `--ico-a` / `--ico-b` resolved to fixed colours, the heroes at 1200×675 and the detail heroes at 1200×288. |
 | `ui.pages` `[{"route": "/pptx-maker", "icon": "Presentation"}]`, page compiled into the dashboard (`app.json:69-77`, `website/src/apps/builtinRegistry.ts:70`) | `ui.entry: "dist/index.mjs"` (a committed ESM bundle built from `ui/src/`), `ui.pages` `[{"route": "/apps/pptx-maker"}]`, no `icon` | An installed app ships its page as a bundle AppHost loads. The legacy `/pptx-maker` route and `Presentation` glyph of an adopted record come from Kiro Crew's adoption pin, never from this manifest. |
 | App Store copy keys in the dashboard catalogs (`website/src/components/appstore/appManifest.ts:349-363`) | `l10n` block in `app.json` for the 11 non-English locales | The listing copy travels with the app. It is the `apps.pptxMaker.manifest` subtree of `ui/i18n/<locale>.json`, kept equal by a test. |
@@ -234,6 +236,44 @@ The rest of `d2b86d36d5`, `d5abd135e9` and `6f13ecb3ef` moves code from the
 built-in into Kiro Crew's own modules (`soffice_discovery.py`, `os_release.py`,
 `agent_placeholders.py`); this repository already carries its own copy of each
 and no behaviour changed.
+
+## Fixes that land here first
+
+Kiro Crew pins this repository (`src/kiro_crew/apps/adoption-pins.json`), so a
+fix to PPTX Maker lands here first. The wheel copy takes the same change in the
+Kiro Crew commit that moves the pin and the wheel copy's version to the release
+here (Kiro Crew `app-kit-platform.md` section 33, enforced by its PR Hygiene
+`App repo:` line).
+
+| Release | Fix | Here |
+|---|---|---|
+| `0.3.2` | Windows: Kiro Crew read and wrote the engine's `output_dir` in `~/.config/sdpm/config.json`, while the engine reads `%APPDATA%\sdpm\config.json`, so the deck folder never reached it; and the managed `pdftoppm` was a `.cmd`, which the engine's bare `pdftoppm` (run with no shell, so `CreateProcess` appends only `.exe`) never finds, while `/deps` reported it ready | `backend/paths.py`, `backend/preview_tools.py`, `tests/conftest.py`, `tests/test_paths.py`, `tests/test_preview_tools.py`, `tests/test_owner_gate.py` |
+| `0.3.2` | A stable launch for the rendered `sdpm` MCP server: on a Kiro Crew that offers `kiro_crew.apps.agent_template_values.{host_path, uv_bin}`, `{HOST_PATH}` and `{UV_BIN}` follow the gateway's fixed values instead of its own `PATH`, so the approved launch survives another shell and an update; an older gateway keeps today's values | `backend/_host.py`, `backend/provision.py`, `backend/engine.py`, `tests/test_provision.py`, `tests/test_host_seams.py` |
+
+In `0.3.2`, `paths.engine_config_path()` mirrors the engine's
+`sdpm.config.get_user_config_dir`, Windows branch included, and the Windows
+launcher is `pdftoppm.exe` in the layout pip writes for a console script
+(distlib's launcher from the gateway's own pip, a `#!` line naming the engine
+interpreter, and a zip that runs the shim). A `~/.config/sdpm/config.json` on
+Windows is not carried over: the engine never read it, so every deck it wrote is
+under its own default, and copying that file's `output_dir` across would point
+both sides at a folder without them. Without pip in the gateway (an install
+such as `uv tool`), or with an engine interpreter path over 260 bytes, the
+install refuses with its reason instead of reporting a launcher that cannot run.
+
+Also in `0.3.2`: a Kiro Crew that offers those two values renders
+`{HOST_PATH}` from a fixed set of directories (the account's tool-manager bins, the
+system dirs and, on Windows, LibreOffice's fixed install roots), never its own
+`PATH`, and `{UV_BIN}` through its install's stable link. The `sdpm` launch an
+operator approves on the MCP page then keeps its approval when the gateway starts
+from another shell and when an update moves the install to the next versioned
+directory. `/deps` searches the same directories the MCP server's `PATH` lists, so
+it never reports a tool only the gateway's own `PATH` holds (`backend/_host.py`,
+`backend/provision.py`, `backend/engine.py`, `tests/test_provision.py`,
+`tests/test_host_seams.py`). Both are feature-detected (`_host.template_host_path`,
+`_host.template_uv_bin`): on a gateway without them the app renders and reports
+exactly what it did in `0.3.1`. The Kiro Crew change that pins this release
+carries the same change into the built-in.
 
 ## Tests
 

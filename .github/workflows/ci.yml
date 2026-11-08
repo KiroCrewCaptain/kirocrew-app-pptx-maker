@@ -7,8 +7,10 @@ name: CI
 # The OS matrix is the manifest's `platform.os` claim. That field is a published
 # capability label, so every OS it names is tested here: PPTX Maker's path
 # containment folds Windows' extended-length prefix and refuses junctions, its
-# managed pdftoppm launcher is a `.cmd` on Windows and a shell script elsewhere,
-# and its agent templates must render to valid JSON from Windows-shaped paths.
+# managed pdftoppm launcher is a `.exe` built from pip's console launcher on
+# Windows (run there by bare name, as the engine runs it) and a shell script
+# elsewhere, and its agent templates must render to valid JSON from
+# Windows-shaped paths.
 on:
   push:
     branches: [main]
