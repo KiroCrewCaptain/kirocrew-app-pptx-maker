@@ -487,6 +487,71 @@ def _sdpm_env(data: dict) -> dict:
     return data["mcpServers"]["sdpm"]["env"]
 
 
+class TestOnAGatewayThatRendersAFixedLaunch:
+    """A current Kiro Crew renders ``{HOST_PATH}`` from a fixed set of directories,
+    never its own ``PATH``, and ``{UV_BIN}`` through its install's stable link
+    (``kiro_crew.apps.agent_template_values``). The rendered ``sdpm`` launch is what
+    an operator approves when they share it, so it must not move when the gateway
+    starts from another shell or an update moves the install. This app's statement
+    of the contract follows the gateway's values, and ``/deps`` searches the same
+    directories the MCP server's ``PATH`` lists."""
+
+    @pytest.fixture(autouse=True)
+    def _gateway(self, fake_host, tmp_path: Path) -> None:
+        self.fixed = tmp_path / "fixed-bin"
+        self.fixed.mkdir()
+        fixed = str(self.fixed)
+        fake_host.table[("kiro_crew.apps.agent_template_values", "host_path")] = lambda: fixed
+        fake_host.table[("kiro_crew.apps.agent_template_values", "uv_bin")] = (
+            lambda: "/opt/crew-venv-current/bin/uv"
+        )
+
+    def test_the_host_path_does_not_follow_the_gateways_own_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setenv("PATH", str(tmp_path / "shell-a"))
+        first = provision.placeholder_values()
+        monkeypatch.setenv("PATH", str(tmp_path / "project" / ".venv" / "bin"))
+        assert provision.placeholder_values() == first
+        assert first[provision.PLACEHOLDER_HOST_PATH] == str(self.fixed)
+
+    def test_the_uv_is_the_gateways_stable_spelling(self):
+        values = provision.placeholder_values()
+        assert values[provision.PLACEHOLDER_UV_BIN] == "/opt/crew-venv-current/bin/uv"
+
+    def test_the_mcp_server_path_is_the_host_path_then_the_managed_dir(self):
+        for name, data in _rendered():
+            entries = _sdpm_env(data)["PATH"].split(os.pathsep)
+            assert entries[0] == str(self.fixed), name
+            assert Path(entries[1]) == provision.paths.preview_tools_bin(), name
+            assert len(entries) == 2, name
+
+    def test_deps_does_not_report_a_tool_only_the_gateways_path_holds(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """The MCP server cannot run it, so ``/deps`` must not say it is there."""
+        own = tmp_path / "own-path"
+        own.mkdir()
+        _fake_tool(own, "pdftoppm")
+        monkeypatch.setenv("PATH", str(own))
+        assert provision.engine.optional_dep_path("pdftoppm") is None
+        assert "pdftoppm" in provision.engine.missing_optional_deps()
+
+        tool = _fake_tool(self.fixed, "pdftoppm")
+        assert _same_path(provision.engine.optional_dep_path("pdftoppm"), tool)
+
+    def test_deps_ranks_the_host_path_ahead_of_the_managed_dir(self):
+        """The same order the MCP server's ``PATH`` has, so ``/deps`` names the binary
+        the engine runs and never calls a system tool one Kiro Crew installed."""
+        managed = provision.paths.preview_tools_bin()
+        managed.mkdir(parents=True)
+        launcher = _fake_tool(managed, "pdftoppm")
+        assert _same_path(provision.engine.optional_dep_path("pdftoppm"), launcher)
+
+        system = _fake_tool(self.fixed, "pdftoppm")
+        assert _same_path(provision.engine.optional_dep_path("pdftoppm"), system)
+
+
 class TestRenderAgents:
     """The shipped agent configs are templates: the engine's absolute location is
     only known at run time, so the gateway substitutes every placeholder.

@@ -42,7 +42,7 @@ from pathlib import Path
 from . import engine, engine_source, paths
 from ._fs import atomic_write
 from ._host import resolve_uv as _shared_resolve_uv
-from ._host import run_limited, sandboxed_spawn_argv
+from ._host import run_limited, sandboxed_spawn_argv, template_host_path, template_uv_bin
 from .engine import UTF8_TEXT
 
 logger = logging.getLogger("kirocrew.app.pptx-maker")
@@ -81,8 +81,8 @@ PLACEHOLDER_APP_DATA = "{APP_DATA}"
 #: ``"command": "uv"`` in an agent config resolved to nothing and every deck
 #: generation failed with executable-not-found.
 PLACEHOLDER_UV_BIN = "{UV_BIN}"
-#: The gateway's ``PATH`` plus the fixed install directory of a ``soffice`` a
-#: by-name lookup cannot reach (:func:`host_path`). The MCP server's ``PATH`` is
+#: The directories the engine's tools are found in (:func:`host_path`): a fixed set
+#: on a current gateway, its own ``PATH`` on an older one. The MCP server's ``PATH`` is
 #: this, then ``{PATH_SEP}``, then the managed tool dir: the engine shells out to
 #: ``pdftoppm``/``soffice`` by name from inside the MCP server that kiro-cli spawns
 #: from the rendered config, so this is the ONLY place the app can put its managed
@@ -146,18 +146,31 @@ def resolve_uv() -> str | None:
 
 
 def host_path() -> str:
-    """What the gateway renders into ``{HOST_PATH}``: its ``PATH``, plus a ``soffice`` dir.
+    """What the gateway renders into ``{HOST_PATH}``.
 
-    A tool installed at a fixed platform install root that its installer does not put
-    on ``PATH`` — LibreOffice on Windows — is appended after the inherited ``PATH``,
-    from :func:`.engine.soffice_install_dir`. Without that entry the engine's own
-    ``shutil.which("soffice")`` cannot see an install the app has already resolved,
-    so ``/deps`` reports LibreOffice present while every thumbnail still fails.
+    A current Kiro Crew renders a fixed set of directories: the account's
+    tool-manager bins, the system dirs and, on Windows, LibreOffice's fixed install
+    roots, never its own ``PATH`` (``_host.template_host_path``). The engine MCP
+    server's launch is part of what an operator approves when they share it, and a
+    ``PATH`` copied from the gateway would have that approval refused whenever the
+    gateway is started from another shell. A tool found only on the gateway's own
+    ``PATH`` outside those directories is therefore not on the server's ``PATH``,
+    and ``/deps`` (:func:`.engine.optional_dep_path`) searches the same directories
+    so it never reports one.
 
-    Empty when both are absent. The gateway then renders no ``{HOST_PATH}`` at all
-    and registers none of the agents, rather than a ``PATH`` that starts with a
-    separator (an empty element means "the current directory" on POSIX).
+    An older Kiro Crew renders its own ``PATH``, plus the directory of a tool
+    installed at a fixed platform install root that its installer does not put on
+    ``PATH`` (LibreOffice on Windows, :func:`.engine.soffice_install_dir`), so that is
+    restated here for it.
+
+    Empty when there is nothing to put in it. The gateway then renders no
+    ``{HOST_PATH}`` at all and registers none of the agents, rather than a ``PATH``
+    that starts with a separator (an empty element means "the current directory" on
+    POSIX).
     """
+    rendered = template_host_path()
+    if rendered is not None:
+        return rendered
     inherited = os.environ.get("PATH", "")
     entries = [inherited] if inherited else []
     system_dir = engine.soffice_install_dir()
@@ -410,7 +423,7 @@ def placeholder_values() -> dict[str, str]:
         PLACEHOLDER_APP_DATA: str(paths.app_root()),
         # Falls back to the bare name only when uv is genuinely absent, which
         # `provision` already reports as a hard failure.
-        PLACEHOLDER_UV_BIN: resolve_uv() or _UV_BASENAME,
+        PLACEHOLDER_UV_BIN: template_uv_bin() or _UV_BASENAME,
         PLACEHOLDER_PATH_SEP: os.pathsep,
     }
     host = host_path()

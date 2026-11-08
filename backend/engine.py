@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import _compat as platform_compat
 from . import engine_source, paths
-from ._host import run_limited, sandboxed_spawn_argv
+from ._host import run_limited, sandboxed_spawn_argv, template_host_path
 
 #: ``kiro_crew.subprocess_utf8.UTF8_TEXT``: decode a child's output as UTF-8 and
 #: never raise on a bad byte, whatever the host's locale.
@@ -387,9 +387,11 @@ def soffice_install_dir() -> str | None:
     The engine runs ``pdftoppm``/``soffice`` by name inside its own
     MCP server process, so a tool whose installer left ``PATH`` alone is invisible
     there even when :func:`optional_dep_path` can point at it.
-    :func:`.provision.host_path` appends what this returns (as the gateway does for
-    the agents' ``{HOST_PATH}``), which is what makes
-    such an install reachable by the process that rasterizes slides.
+    On a gateway that renders its own ``PATH`` into the agents' ``{HOST_PATH}``,
+    :func:`.provision.host_path` appends what this returns (as that gateway does),
+    which is what makes such an install reachable by the process that rasterizes
+    slides. A current gateway lists the fixed install roots in ``{HOST_PATH}``
+    itself.
 
     A tool already on ``PATH`` contributes nothing, so the rendered ``PATH`` grows only
     on a host where the difference is what decides whether previews work.
@@ -421,8 +423,24 @@ def optional_dep_path(name: str) -> str | None:
     the managed probe would report LibreOffice as installed BY Kiro Crew, which the UI
     renders as a claim about the host that this app never made.
 
+    On a current Kiro Crew the engine's MCP server runs with ``{HOST_PATH}``, a fixed
+    set of directories rather than the gateway's own ``PATH``
+    (:func:`.provision.host_path`), then the managed directory. Those directories are
+    searched instead, in the same order, so ``/deps`` reports a tool present exactly
+    when that server can run it and never one only the gateway's ``PATH`` holds. On
+    Windows they end with LibreOffice's fixed install roots, so the second step above
+    is part of the first there.
+
     Returns ``None`` when the tool is available from no source.
     """
+    rendered = template_host_path()
+    if rendered is not None:
+        directories = [d for d in rendered.split(os.pathsep) if d]
+        for directory in [*directories, str(paths.preview_tools_bin())]:
+            found = _which_within(name, directory)
+            if found:
+                return found
+        return None
     found = shutil.which(name)
     if found:
         return found
