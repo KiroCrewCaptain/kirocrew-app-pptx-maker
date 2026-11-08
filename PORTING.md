@@ -94,6 +94,7 @@ change here.
 | `provision._register_resources` calling the private `kiro_crew.apps.bridges.register_app` (`backend/provision.py:491-528`) | Removed | Provisioning already did not call it (the gateway registers on enable and at start); it was kept only as a test seam. |
 | `kiro_crew.atomic_write.atomic_write`, `kiro_crew.platform_compat.{IS_WINDOWS, strip_extended_length_prefix, chmod_safe}`, `kiro_crew.subprocess_utf8.UTF8_TEXT`, `kiro_crew.browser_cli.os_deps.{os_release_ids, rpm_package_manager}` | `backend/_fs.py`, `backend/_compat.py`, `engine.UTF8_TEXT`, `backend/_os_deps.py` | Small and carrying no security decision, so restated (see gap 6). |
 | `kiro_crew.env.resolve_uv` (`backend/provision.py:45`) | The gateway's resolver through `_host.resolve_uv`, with the same ladder restated for a gateway without it | The gateway renders the same value into the agents' `{UV_BIN}`, so the two must agree. |
+| (none) | `kiro_crew.apps.agent_template_values.{host_path, uv_bin}` through `_host.template_host_path` / `_host.template_uv_bin`; on a gateway without them, its own `PATH` (plus the off-`PATH` `soffice` dir) and its resolver's `uv`, as that gateway renders | `placeholder_values` and `/deps` state what the gateway renders into `{HOST_PATH}` and `{UV_BIN}`. Not a security control, so a gateway without them refuses nothing. |
 | `iconUrl` / `hero*` as absolute `/app-assets/pptx-maker/*.svg`, `screenshots` `/app-assets/…` (`app.json:85-99`) | `iconPath` / `hero*` / `screenshots` as repo-relative PNGs under `assets/` | A registry app's art is repo-relative, and the catalog's publish step refuses SVG for a non-builtin source. The PNGs were rendered from the built-in SVGs (kept beside them): the icon at 512×512 on an opaque tile with `--ico-a` / `--ico-b` resolved to fixed colours, the heroes at 1200×675 and the detail heroes at 1200×288. |
 | `ui.pages` `[{"route": "/pptx-maker", "icon": "Presentation"}]`, page compiled into the dashboard (`app.json:69-77`, `website/src/apps/builtinRegistry.ts:70`) | `ui.entry: "dist/index.mjs"` (a committed ESM bundle built from `ui/src/`), `ui.pages` `[{"route": "/apps/pptx-maker"}]`, no `icon` | An installed app ships its page as a bundle AppHost loads. The legacy `/pptx-maker` route and `Presentation` glyph of an adopted record come from Kiro Crew's adoption pin, never from this manifest. |
 | App Store copy keys in the dashboard catalogs (`website/src/components/appstore/appManifest.ts:349-363`) | `l10n` block in `app.json` for the 11 non-English locales | The listing copy travels with the app. It is the `apps.pptxMaker.manifest` subtree of `ui/i18n/<locale>.json`, kept equal by a test. |
@@ -234,6 +235,18 @@ The rest of `d2b86d36d5`, `d5abd135e9` and `6f13ecb3ef` moves code from the
 built-in into Kiro Crew's own modules (`soffice_discovery.py`, `os_release.py`,
 `agent_placeholders.py`); this repository already carries its own copy of each
 and no behaviour changed.
+
+Released as `0.3.2`, landing here before the built-in: a current Kiro Crew renders
+`{HOST_PATH}` from a fixed set of directories (the account's tool-manager bins, the
+system dirs and, on Windows, LibreOffice's fixed install roots), never its own
+`PATH`, and `{UV_BIN}` through its install's stable link. The `sdpm` launch an
+operator approves on the MCP page then keeps its approval when the gateway starts
+from another shell and when an update moves the install to the next versioned
+directory. `/deps` searches the same directories the MCP server's `PATH` lists, so
+it never reports a tool only the gateway's own `PATH` holds (`backend/_host.py`,
+`backend/provision.py`, `backend/engine.py`, `tests/test_provision.py`,
+`tests/test_host_seams.py`). The Kiro Crew change that pins this release carries
+the same change into the built-in.
 
 ## Tests
 

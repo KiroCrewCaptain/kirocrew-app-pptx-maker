@@ -341,6 +341,37 @@ def resolve_uv() -> str | None:
     return found if found and os.path.isabs(found) else None
 
 
+def template_host_path() -> str | None:
+    """The gateway's ``{HOST_PATH}`` value, or ``None`` on a gateway that does not offer it.
+
+    A Kiro Crew that offers ``kiro_crew.apps.agent_template_values.host_path`` renders
+    a fixed set of directories into the agents' ``{HOST_PATH}``, never its own
+    ``PATH``. ``None`` means an older gateway, which renders its own ``PATH``; the
+    caller restates that (:func:`.provision.host_path`). A value that is not a string
+    reads as ``None`` too.
+    """
+    impl = _host_attr("kiro_crew.apps.agent_template_values", "host_path")
+    if not callable(impl):
+        return None
+    value = impl()
+    return value if isinstance(value, str) else None
+
+
+def template_uv_bin() -> str | None:
+    """The gateway's ``{UV_BIN}`` value, or :func:`resolve_uv` on a gateway without it.
+
+    A Kiro Crew that offers ``kiro_crew.apps.agent_template_values.uv_bin`` renders
+    the ``uv`` it resolves spelled through its install's stable link, so an update
+    that moves the install to the next versioned directory does not change it. An
+    older gateway renders :func:`resolve_uv` as it is.
+    """
+    impl = _host_attr("kiro_crew.apps.agent_template_values", "uv_bin")
+    if not callable(impl):
+        return resolve_uv()
+    found = impl()
+    return found if isinstance(found, str) and found else None
+
+
 # ── verified download ───────────────────────────────────────────────────────
 
 
