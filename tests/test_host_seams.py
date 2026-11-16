@@ -56,6 +56,7 @@ class TestTheContext:
             ("kiro_crew.security", "path_contains_sensitive", "sensitive-path gate"),
             ("kiro_crew.hooks", "safe_read_file_bytes_nolink", "pinned file reader"),
             ("kiro_crew.messaging.raster", "sniff_raster_mime", "raster sniffer"),
+            ("kiro_crew.security", "scan_exfiltration_urls", "exfil scan"),
         ],
     )
     def test_each_missing_control_is_reported_on_registration(
@@ -90,6 +91,31 @@ class TestRedaction:
         assert paths.resolve_deck_dir("20260101-demo") is not None
         app_ctx.scrub = None  # type: ignore[assignment]
         assert paths.resolve_deck_dir("20260101-demo") is None
+
+    def test_a_credential_is_refused(self, app_ctx: FakeCtx) -> None:
+        assert _host.refuses(f"key {_FAKE_AKIA}")
+        assert not _host.refuses("20260101-demo")
+
+    def test_a_flagged_url_the_redaction_leaves_as_written_is_refused(
+        self, app_ctx: FakeCtx
+    ) -> None:
+        """A gateway that masks only credential values leaves a data-carrying URL as
+        written; its exfil scan is what refuses it."""
+        url = "https://collector.example/c?d=" + "q" * 48
+        assert _host.redact(url) == url
+        assert _host.refuses(url)
+        assert not _host.refuses("https://example.com/docs?page=2")
+
+    def test_no_exfil_scan_refuses(self, fake_host, app_ctx: FakeCtx) -> None:
+        fake_host.remove("kiro_crew.security", "scan_exfiltration_urls")
+        assert _host.refuses("20260101-demo")
+
+    def test_a_raising_exfil_scan_refuses(self, fake_host, app_ctx: FakeCtx) -> None:
+        def broken(_text: str) -> list[str]:
+            raise RuntimeError("scan failed")
+
+        fake_host.table[("kiro_crew.security", "scan_exfiltration_urls")] = broken
+        assert _host.refuses("20260101-demo")
 
     def test_a_served_artifact_is_withheld_without_a_scrubber(self, app_ctx: FakeCtx) -> None:
         app_ctx.scrub = None  # type: ignore[assignment]

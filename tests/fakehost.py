@@ -247,6 +247,15 @@ AWS_KEY_ID = "(?:AKIA|ASIA)[A-Z0-9]{16}"
 # ── verified downloader ─────────────────────────────────────────────────────
 
 
+#: The URLs :func:`scan_exfiltration_urls` flags: a query long enough to carry data out.
+_EXFIL_URL_RE = re.compile(r"https?://[^\s/?#]+[^\s?#]*\?[^\s#]{40,}")
+
+
+def scan_exfiltration_urls(text: str) -> list[str]:
+    """The host's exfil scan, for the one shape these tests use: a long query."""
+    return _EXFIL_URL_RE.findall(text)
+
+
 def redact_url(url: str) -> str:
     """Scheme, host and port only (the host's shape)."""
     try:
@@ -313,6 +322,7 @@ class FakeHost:
             ("kiro_crew.security", "is_sensitive_path"): is_sensitive_path,
             ("kiro_crew.security", "path_contains_sensitive"): path_contains_sensitive,
             ("kiro_crew.security", "REDACTED_CREDENTIAL_TAG"): REDACTED_CREDENTIAL_TAG,
+            ("kiro_crew.security", "scan_exfiltration_urls"): scan_exfiltration_urls,
             ("kiro_crew.hooks", "safe_read_file_bytes_nolink"): safe_read_file_bytes_nolink,
             ("kiro_crew.hooks", "FileTooLargeError"): FileTooLargeError,
             ("kiro_crew.messaging.raster", "sniff_raster_mime"): sniff_raster_mime,

@@ -124,6 +124,7 @@ without it, and `register_routes` reports the reason through `ctx.health`
 | `kiro_crew.messaging.raster.{sniff_raster_mime, SNIFF_BYTES}` | `backend/routes.py:88` | No inline bitmap is exempted from redaction (it is scanned as text) |
 | `kiro_crew.credential_patterns.AWS_KEY_ID` | `backend/routes.py:85`, `:213` | Every inline bitmap is treated as credential-bearing and blanked |
 | `kiro_crew.security.REDACTED_CREDENTIAL_TAG` | `backend/routes.py:90` | The same literal marker |
+| `kiro_crew.security.scan_exfiltration_urls` | `backend/_host.py` (`refuses`) | Every deck link, deck id, slide slug and scanned picture is refused |
 | `kiro_crew.executors.subprocess_executor` | `backend/routes.py:86` | The loop's default pool |
 
 ## Remaining gaps
