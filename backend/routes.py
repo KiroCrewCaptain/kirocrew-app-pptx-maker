@@ -84,6 +84,7 @@ from ._host import (
     is_sensitive_path,
     path_contains_sensitive,
     redact,
+    refuses,
     sniff_raster_mime,
     subprocess_executor,
 )
@@ -312,7 +313,7 @@ def _scanned_bitmap_bytes(b64_body: str) -> tuple[bytes | None, bool]:
     # lossy-decoded copy tells us whether the redactor finds anything in there. Only
     # a blob it leaves untouched is safe to exempt.
     probe = raw.decode("utf-8", errors="replace")
-    if redact(probe) != probe:
+    if refuses(probe):
         return None, True
     # And scan the ENCODED text, which is the form actually served. See the docstring:
     # a credential appended to a real raster's body decodes to noise (so the check

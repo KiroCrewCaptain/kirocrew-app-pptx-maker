@@ -113,6 +113,10 @@ _CAPABILITIES: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (("kiro_crew.hooks", "safe_read_file_bytes_nolink"),),
     ),
     (
+        "deck links, deck ids and slide slugs are refused: this Kiro Crew has no exfil scan",
+        (("kiro_crew.security", "scan_exfiltration_urls"),),
+    ),
+    (
         "pictures inside slide previews are blanked: this Kiro Crew has no raster sniffer",
         (("kiro_crew.messaging.raster", "sniff_raster_mime"),),
     ),
@@ -219,6 +223,29 @@ def redact(text: str) -> str:
         return WITHHELD
     cleaned = getattr(result, "text", None)
     return cleaned if isinstance(cleaned, str) else WITHHELD
+
+
+def refuses(text: str) -> bool:
+    """Whether a gate refuses *text*: the redaction changes it, or the exfil scan flags it.
+
+    The comparison alone was the decision while the gateway's redaction rewrote a
+    data-carrying URL whole; a gateway that masks only credential values leaves such
+    a URL as written, so the gateway's own exfil scan
+    (``kiro_crew.security.scan_exfiltration_urls``) decides it too. On an older
+    gateway the redaction still rewrites the URL and the comparison refuses it, so
+    the answer is the same on both. Fails closed: a gateway without the scan, or a
+    scan that raises, refuses.
+    """
+    if redact(text) != text:
+        return True
+    scan = _host_attr("kiro_crew.security", "scan_exfiltration_urls")
+    if not callable(scan):
+        return True
+    try:
+        return bool(scan(text))
+    except Exception:  # noqa: BLE001 - fail closed: refuse, never pass unscanned
+        logger.warning("pptx-maker: the exfil scan failed; refused")
+        return True
 
 
 def redaction_available_on(ctx: Any) -> bool:
