@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -341,11 +342,17 @@ def _ensure_venv(engine_root: Path, log: list[str], uv_bin: str) -> bool:
         log.append("the engine checkout has no mcp-local directory")
         return False
     log.append("resolving engine dependencies…")
+    # Reuse the desktop's compatible bundled interpreter by path. A development
+    # gateway can run a newer Python than the engine's locked dependencies support.
+    version = engine_source.ENGINE_PYTHON_VERSION
+    python = f"cpython@{version[0]}.{version[1]}"
+    if sys.implementation.name == "cpython" and sys.version_info[:2] == version:
+        python = sys.executable
     # `--frozen` installs the engine's `uv.lock` as pinned: without it uv re-resolves a
     # lock it judges stale and can pick an `mcp` major the engine cannot import. The
     # agents' `uv run` passes it for the same reason.
     code, out = _run(
-        [uv_bin, "sync", "--frozen", "--project", str(mcp_dir)],
+        [uv_bin, "sync", "--frozen", "--python", python, "--project", str(mcp_dir)],
         cwd=str(engine_root),
         timeout=UV_SYNC_TIMEOUT,
     )

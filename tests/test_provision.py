@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -415,6 +416,40 @@ class TestRunSandboxing:
 
 
 class TestEnsureVenv:
+    @pytest.mark.parametrize(
+        ("implementation", "version", "use_host"),
+        [
+            ("cpython", (3, 12), True),
+            ("cpython", (3, 15), False),
+            ("pypy", (3, 12), False),
+        ],
+    )
+    def test_sync_selects_compatible_cpython_but_editable_uses_the_engine_venv(
+        self, tmp_path: Path, monkeypatch, implementation, version, use_host
+    ):
+        (tmp_path / "mcp-local").mkdir()
+        host_python = str(tmp_path / "Kiro Crew" / "python")
+        monkeypatch.setattr(
+            provision,
+            "sys",
+            SimpleNamespace(
+                implementation=SimpleNamespace(name=implementation),
+                version_info=version,
+                executable=host_python,
+            ),
+        )
+        with mock.patch.object(provision, "_run", return_value=(0, "")) as run:
+            assert provision._ensure_venv(tmp_path, [], "/opt/uv") is True
+
+        sync_argv = run.call_args_list[0].args[0]
+        assert sync_argv[sync_argv.index("--python") + 1] == (
+            host_python if use_host else "cpython@3.12"
+        )
+        editable_argv = run.call_args_list[1].args[0]
+        assert editable_argv[editable_argv.index("--python") + 1] == str(
+            provision.paths.venv_python(tmp_path)
+        )
+
     def test_a_checkout_without_mcp_local_is_refused(self, tmp_path: Path):
         """Guards against building against a tree that is not the engine."""
         log: list[str] = []
