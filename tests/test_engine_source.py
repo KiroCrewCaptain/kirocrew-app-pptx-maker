@@ -58,15 +58,15 @@ def _write_lock(root: Path, data: bytes = _LOCK) -> None:
     (root / "mcp-local" / "uv.lock").write_bytes(data)
 
 
-def _benign_engine_tar() -> bytes:
+def _benign_engine_tar(wrapper_name: str = "repo-abc123") -> bytes:
     """A tarball shaped like the real one: one wrapper dir containing mcp-local."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        wrapper = tarfile.TarInfo("repo-abc123")
+        wrapper = tarfile.TarInfo(wrapper_name)
         wrapper.type = tarfile.DIRTYPE
         wrapper.mode = 0o755
         tar.addfile(wrapper)
-        mcp = tarfile.TarInfo("repo-abc123/mcp-local")
+        mcp = tarfile.TarInfo(f"{wrapper_name}/mcp-local")
         mcp.type = tarfile.DIRTYPE
         mcp.mode = 0o755
         tar.addfile(mcp)
@@ -74,7 +74,7 @@ def _benign_engine_tar() -> bytes:
             ("pyproject.toml", b"[project]\nname = 'sdpm-mcp-local'\n"),
             ("uv.lock", _LOCK),
         ):
-            f = tarfile.TarInfo(f"repo-abc123/mcp-local/{name}")
+            f = tarfile.TarInfo(f"{wrapper_name}/mcp-local/{name}")
             f.size = len(payload)
             f.mode = 0o644
             tar.addfile(f, io.BytesIO(payload))
@@ -559,6 +559,66 @@ class TestInstallEngine:
         assert engine_source.is_installed(root) is True
         assert any(engine_source.ENGINE_TAG in line for line in log)
 
+    def test_a_long_wrapper_is_shortened_before_building(self, tmp_path: Path):
+        root = tmp_path / "vendor" / "sdpm"
+        work = root.parent / f".engine-fetch.{os.getpid()}"
+        wrapper = f"sample-spec-driven-presentation-maker-{engine_source.ENGINE_COMMIT}"
+        seen: list[Path] = []
+
+        def build(staged: Path) -> bool:
+            seen.append(staged)
+            assert staged == work / "src"
+            assert not (work / "unpacked" / wrapper).exists()
+            assert (staged / "mcp-local" / "uv.lock").read_bytes() == _LOCK
+            assert not root.exists(), "validation must precede the swap"
+            (staged / "mcp-local" / "build-complete").write_bytes(b"built")
+            return True
+
+        def finalize(final: Path) -> bool:
+            seen.append(final)
+            assert final == root
+            assert (final / "mcp-local" / "build-complete").read_bytes() == b"built"
+            return True
+
+        with self._patch_fetch(_benign_engine_tar(wrapper)):
+            assert engine_source.install_engine(root, [], validate=build, finalize=finalize)
+
+        assert len(seen) == 2
+        assert not seen[0].exists()
+        assert engine_source.is_installed(root)
+        assert {p.name for p in root.iterdir()} == {
+            "mcp-local",
+            engine_source.SOURCE_MARKER_FILENAME,
+        }
+        assert not work.exists()
+
+    def test_a_failed_source_rename_keeps_the_previous_engine(self, tmp_path: Path):
+        root = tmp_path / "vendor" / "sdpm"
+        (root / "mcp-local").mkdir(parents=True)
+        keep = root / "mcp-local" / "keep.txt"
+        keep.write_bytes(b"previous engine")
+        work = root.parent / f".engine-fetch.{os.getpid()}"
+        log: list[str] = []
+        with (
+            self._patch_fetch(_benign_engine_tar()),
+            mock.patch.object(
+                Path, "rename", autospec=True, side_effect=OSError("rename denied")
+            ) as rename,
+            mock.patch.object(engine_source, "write_source_marker") as marker,
+            mock.patch.object(engine_source, "_swap_in") as swap,
+        ):
+            validate = mock.Mock()
+            assert engine_source.install_engine(root, log, validate=validate) is False
+
+        rename.assert_called_once_with(work / "unpacked" / "repo-abc123", work / "src")
+        marker.assert_not_called()
+        validate.assert_not_called()
+        swap.assert_not_called()
+        assert keep.read_bytes() == b"previous engine"
+        assert not (root / engine_source.SOURCE_MARKER_FILENAME).exists()
+        assert any("rename denied" in line for line in log)
+        assert not work.exists()
+
     def test_the_marker_is_written_before_the_swap_not_after(self, tmp_path: Path):
         """A failing marker write must not be able to leave NO usable engine.
 
@@ -612,6 +672,8 @@ class TestInstallEngine:
 
         def failing_build(staged: Path) -> bool:
             seen.append(staged)
+            assert staged == root.parent / f".engine-fetch.{os.getpid()}" / "src"
+            assert (staged / "mcp-local" / "uv.lock").read_bytes() == _LOCK
             return False
 
         log: list[str] = []
@@ -623,6 +685,7 @@ class TestInstallEngine:
         # And the previous engine is untouched.
         assert (root / "mcp-local" / "keep.txt").read_text(encoding="utf-8") == "previous engine"
         assert any("keeping the existing one" in line for line in log)
+        assert not seen[0].exists()
 
     def test_a_successful_build_swaps_the_new_tree_in(self, tmp_path: Path):
         """The other direction: validation passing must not block the install."""
@@ -1012,7 +1075,7 @@ class TestSwapRollback:
 
         def swap(src: Path, root: Path, finalize: object) -> bool:
             with self._windows_held_new_tree(root, also_refuse_restore=True):
-                return real_swap(extracted, root, lambda final: False)
+                return real_swap(src, root, lambda final: False)
 
         with mock.patch.object(engine_source, "download_archive", return_value=(True, "")), \
                 mock.patch.object(engine_source, "_extract_tar"), \

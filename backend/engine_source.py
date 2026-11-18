@@ -436,6 +436,9 @@ def install_engine(
         if not (extracted / "mcp-local").is_dir():
             log.append("the engine archive has no mcp-local directory")
             return False
+        # Keep build paths short: GitHub's wrapper includes the repository name
+        # and full commit, which can exhaust Windows' path budget in setuptools.
+        extracted = extracted.rename(work / "src")
         # Marker into the STAGING tree, then swap. Reversing these leaves a window
         # where the old engine is already retired and a failing marker write makes
         # the new (complete) tree read as not-installed — see write_source_marker.
