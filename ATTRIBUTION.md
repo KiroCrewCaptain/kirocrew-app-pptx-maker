@@ -32,3 +32,8 @@ data directory on first use, unmodified, and driven through its own documented M
 tools and Python API. The pin lives in `backend/engine_source.py`
 (`ENGINE_TAG` / `ENGINE_COMMIT` / `ENGINE_TARBALL_SHA256` / `ENGINE_LOCK_SHA256`,
 bumped together), which is the single place an engine upgrade is made.
+`ENGINE_PYTHON_VERSION` alongside them records the compatible CPython version
+(3.12), reviewed with each engine upgrade. Provisioning reuses the gateway's
+interpreter by path when it matches, otherwise asks uv for CPython 3.12 under
+the existing Python download policy. Editable installs use the engine venv's
+own interpreter.
