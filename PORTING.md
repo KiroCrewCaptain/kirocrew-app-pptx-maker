@@ -238,6 +238,12 @@ built-in into Kiro Crew's own modules (`soffice_discovery.py`, `os_release.py`,
 `agent_placeholders.py`); this repository already carries its own copy of each
 and no behaviour changed.
 
+Carried in `0.3.4`, from Kiro Crew `main` `3071ec89c7` (2026-11-10):
+
+| Kiro Crew commit | Here |
+|---|---|
+| `3071ec89c7` refuse a deck id, name or path segment that ends in a newline (`SEGMENT_RE`, `_EPOCH_RE` and `_SLUG_EPOCH_RE` end at `\Z`) | `backend/paths.py`, `backend/decks.py`, `tests/test_paths.py` |
+
 ## Fixes that land here first
 
 Kiro Crew pins this repository (`src/kiro_crew/apps/adoption-pins.json`), so a
