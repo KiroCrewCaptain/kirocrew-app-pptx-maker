@@ -215,6 +215,22 @@ class TestInlineBitmaps:
         out = routes._redact_artifact(self._doc().encode("utf-8")).decode("utf-8")
         assert "REDACTED" in out
 
+    def test_the_data_uri_scan_compiles_the_gateways_aws_key_id_spelling(self) -> None:
+        """The scan must recognise exactly the ids the gateway's redaction does, so it
+        compiles the gateway's own pattern instead of a copy."""
+        from fakehost import AWS_KEY_ID
+
+        compiled = routes._encoded_credential_re()
+        assert compiled is not None
+        assert compiled.pattern == AWS_KEY_ID
+
+    def test_no_key_pattern_blanks_the_picture(self, fake_host) -> None:
+        """Without the gateway's AWS key pattern the encoded body cannot be cleared,
+        so the picture is dropped rather than served unscanned."""
+        fake_host.remove("kiro_crew.credential_patterns", "AWS_KEY_ID")
+        out = routes._redact_artifact(self._doc().encode("utf-8")).decode("utf-8")
+        assert "base64,[REDACTED: credential]" in out
+
 
 class TestRasterSniffThroughTheBackendSdk:
     """The sniff is the public backend SDK's (App Kit level 14), never a private name."""
@@ -260,22 +276,6 @@ class TestRasterSniffThroughTheBackendSdk:
     def test_the_shim_names_no_private_raster_module(self) -> None:
         source = (Path(_host.__file__)).read_text(encoding="utf-8")
         assert "kiro_crew.messaging" not in source
-
-    def test_the_data_uri_scan_compiles_the_gateways_aws_key_id_spelling(self) -> None:
-        """The scan must recognise exactly the ids the gateway's redaction does, so it
-        compiles the gateway's own pattern instead of a copy."""
-        from fakehost import AWS_KEY_ID
-
-        compiled = routes._encoded_credential_re()
-        assert compiled is not None
-        assert compiled.pattern == AWS_KEY_ID
-
-    def test_no_key_pattern_blanks_the_picture(self, fake_host) -> None:
-        """Without the gateway's AWS key pattern the encoded body cannot be cleared,
-        so the picture is dropped rather than served unscanned."""
-        fake_host.remove("kiro_crew.credential_patterns", "AWS_KEY_ID")
-        out = routes._redact_artifact(self._doc().encode("utf-8")).decode("utf-8")
-        assert "base64,[REDACTED: credential]" in out
 
 
 class TestDownloadAndAudit:
