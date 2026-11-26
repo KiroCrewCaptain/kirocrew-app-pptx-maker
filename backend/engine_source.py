@@ -69,6 +69,10 @@ ENGINE_TAG = "v0.3.8"
 #: content-addressed — unlike a tag, upstream cannot move it.
 ENGINE_COMMIT = "b7c7fcf0972b33a480f1b717a3de5bc288d53742"
 
+#: CPython version verified with this engine's locked dependencies. Review it
+#: together with the engine pin; a newer host Python may lack compatible wheels.
+ENGINE_PYTHON_VERSION = (3, 12)
+
 #: sha256 of that archive, **and the trust anchor for the whole engine**.
 #:
 #: Produced by downloading the artifact this module names and hashing it as
@@ -83,7 +87,8 @@ ENGINE_COMMIT = "b7c7fcf0972b33a480f1b717a3de5bc288d53742"
 #: input, the pax ``comment`` header, is the commit sha itself).
 #:
 #: Bumping the engine means bumping :data:`ENGINE_COMMIT`, this digest,
-#: :data:`ENGINE_LOCK_SHA256` and :data:`ENGINE_TAG` together. Bumping the commit
+#: :data:`ENGINE_LOCK_SHA256` and :data:`ENGINE_TAG` together, and reviewing
+#: :data:`ENGINE_PYTHON_VERSION`. Bumping the commit
 #: alone fails verification on every host, which is the intended failure mode:
 #: the digest, not the tag and not the commit, is what decides whether code runs.
 ENGINE_TARBALL_SHA256 = "ffe8e10b973cada1f6e99629ac780bde25461b432ad07943b4f15ca11c07dfe0"
