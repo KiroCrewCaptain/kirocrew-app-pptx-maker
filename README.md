@@ -241,6 +241,13 @@ Kiro Crew change.
 | `capture/` | Captures the README media from a real, isolated Kiro Crew ([capture/README.md](capture/README.md)) |
 | `docs/media/` | The README pictures and walkthrough, plus `media.json` (sizes, alt text, commits) |
 
+Engine installation verifies and safely extracts the pinned archive, then moves
+its source tree to a short staging directory before building. This leaves more
+room for setuptools' nested build paths on Windows. Extraction still uses the
+archive's wrapper directory, so an excessively long data-home path can still
+fail. A build failure keeps the previous engine; after a successful swap, the
+editable skill package is relinked at its final location.
+
 ### What it needs from Kiro Crew
 
 Kiro Crew 0.12.0 or later (`minKiroCrewVersion`): App Kit level 1, which gives an
