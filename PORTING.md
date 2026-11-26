@@ -121,11 +121,23 @@ without it, and `register_routes` reports the reason through `ctx.health`
 | `kiro_crew.asset_downloader.download_to` | `backend/engine_source.py:48` | The engine install is refused with its reason; nothing is fetched another way |
 | `kiro_crew.security.{is_sensitive_path, path_contains_sensitive}` | `backend/paths.py:34`, `backend/routes.py:89-94` | Every path is treated as sensitive: no deck or library file resolves, no deck root is accepted |
 | `kiro_crew.hooks.{safe_read_file_bytes_nolink, FileTooLargeError}` | `backend/decks.py:37-39`, `backend/library.py:34-37`, `backend/routes.py:74`, `:87` | Every deck file and style reads as unreadable (`None`) |
-| `kiro_crew.messaging.raster.{sniff_raster_mime, SNIFF_BYTES}` | `backend/routes.py:88` | No inline bitmap is exempted from redaction (it is scanned as text) |
 | `kiro_crew.credential_patterns.AWS_KEY_ID` | `backend/routes.py:85`, `:213` | Every inline bitmap is treated as credential-bearing and blanked |
 | `kiro_crew.security.REDACTED_CREDENTIAL_TAG` | `backend/routes.py:90` | The same literal marker |
 | `kiro_crew.security.scan_exfiltration_urls` | `backend/_host.py` (`refuses`) | Every deck link, deck id, slide slug and scanned picture is refused |
 | `kiro_crew.executors.subprocess_executor` | `backend/routes.py:86` | The loop's default pool |
+
+## Host controls through the public backend SDK
+
+A control that Kiro Crew's public backend SDK (`kiro_crew.apps.backend_sdk`,
+App Kit `api-reference.md`, "Backend SDK") now offers is reached through it
+instead of its private name. `_host.py` still looks it up lazily, by name,
+through `_host._backend_sdk_attr`, which also requires the package's
+`SDK_LEVEL` to be at least the level the name arrived at; a gateway below it
+refuses exactly as a missing private control did.
+
+| Built-in import | Here | Level | Without it |
+|---|---|---|---|
+| `kiro_crew.messaging.raster.{sniff_raster_mime, SNIFF_BYTES}` (`backend/routes.py:88`) | `kiro_crew.apps.backend_sdk.sniff_raster_mime`, handed the whole candidate blob (a longer buffer answers the same, so no `SNIFF_BYTES` window is copied) | 14 | No inline bitmap is exempted from redaction (it is scanned as text), so pictures inside slide previews are blanked; `register_routes` reports it |
 
 ## Remaining gaps
 
@@ -258,6 +270,7 @@ here (Kiro Crew `app-kit-platform.md` section 33, enforced by its PR Hygiene
 | `0.3.2` | A stable launch for the rendered `sdpm` MCP server: on a Kiro Crew that offers `kiro_crew.apps.agent_template_values.{host_path, uv_bin}`, `{HOST_PATH}` and `{UV_BIN}` follow the gateway's fixed values instead of its own `PATH`, so the approved launch survives another shell and an update; an older gateway keeps today's values | `backend/_host.py`, `backend/provision.py`, `backend/engine.py`, `tests/test_provision.py`, `tests/test_host_seams.py` |
 | `0.3.3` | kirodotdev/KiroCrew#31183: an engine whose `mcp-local/uv.lock` was rewritten after install (a `uv run` without `--frozen`) kept its source marker and its venv, so provisioning skipped it, Install engine was never offered again, and `uv run --frozen` installed the rewritten lock, so the `sdpm` server still failed to start. The engine now counts as installed only while that lock hashes to the one inside the pinned archive (`ENGINE_LOCK_SHA256`, which moves with `ENGINE_COMMIT`, `ENGINE_TARBALL_SHA256` and `ENGINE_TAG`); a drifted or missing lock reads as not installed, so the next provision fetches the tree again and rebuilds its venv | `backend/engine_source.py`, `tests/test_engine_source.py`, `tests/test_engine.py`, `ATTRIBUTION.md` |
 | `0.3.4` | kirodotdev/KiroCrew#37408: a gateway that masks only credential values inside a link leaves a URL that carries data out as written, so the four refusals that compared `redact(x)` with `x` (deck link, deck id, slide slug, scanned picture) would pass it. They now call `refuses()`, which also asks the gateway's exfil scan (`kiro_crew.security.scan_exfiltration_urls`) and fails closed when the scan is missing or raises | `backend/_host.py`, `backend/decks.py`, `backend/paths.py`, `backend/routes.py`, `tests/fakehost.py`, `tests/test_host_seams.py` |
+| `0.3.5` | kirodotdev/KiroCrew#41924 publishes the gateway's raster sniffer as `kiro_crew.apps.backend_sdk.sniff_raster_mime` (App Kit level 14), the same function by reference. The inline-bitmap check now asks it instead of the private `kiro_crew.messaging.raster`, so this repository no longer reaches that module. A gateway below level 14 answers no raster, so slide-preview pictures are blanked rather than exempted on an unverified signature. Kiro Crew's adoption pin for this release carries `minAppSdkLevel` 14 (`adoption_pin.py compute --min-sdk-level 14`), so a host without the name keeps its wheel copy | `backend/_host.py`, `backend/routes.py`, `tests/fakehost.py`, `tests/test_host_seams.py` |
 
 In `0.3.2`, `paths.engine_config_path()` mirrors the engine's
 `sdpm.config.get_user_config_dir`, Windows branch included, and the Windows
@@ -323,9 +336,11 @@ loop. Removing the built-in, its skill, its catalog keys and the core references
 
 1. Call the full 40-hex SHA of the commit to pin `C` (`git rev-parse HEAD`).
 2. In the Kiro Crew release PR that adds adoption, run
-   `python3 scripts/adoption_pin.py compute <this URL> C` and add the row it
-   prints to `src/kiro_crew/apps/adoption-pins.json`; then
-   `python3 scripts/adoption_pin.py verify`.
+   `python3 scripts/adoption_pin.py compute <this URL> C --min-sdk-level 14` and
+   add the row it prints to `src/kiro_crew/apps/adoption-pins.json`; then
+   `python3 scripts/adoption_pin.py verify`. Level 14 is the backend SDK's
+   raster sniffer (`0.3.5` and later); the tool refuses a lower level for a tree
+   that names it.
 3. The KiroCrewApps row for `pptx-maker` switches from `"type": "builtin"` to
    `"type": "git"`, this URL, `"ref": "C"`, never a branch name.
 4. The pin's `version` is this `app.json`'s, and adoption also requires the

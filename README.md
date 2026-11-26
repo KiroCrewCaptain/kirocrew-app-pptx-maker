@@ -258,6 +258,12 @@ running it unprotected; `register_routes` reports what is missing through the
 app's health. No other backend module names `kiro_crew`
 (`tests/test_no_host_imports.py`).
 
+The check that keeps pictures inside slide previews (is this inline image really
+a picture?) uses Kiro Crew's public backend SDK
+(`kiro_crew.apps.backend_sdk.sniff_raster_mime`), which App Kit level 14 adds.
+On an older Kiro Crew those pictures are blanked instead, and the app's health
+says why; everything else works as before.
+
 The agent templates carry only the host placeholders Kiro Crew computes for every
 app: `{APP_ROOT}`, `{APP_DATA}`, `{UV_BIN}`, `{HOST_PATH}` and `{PATH_SEP}`. The
 gateway fills them in itself when it registers the agents. `backend/provision.py`

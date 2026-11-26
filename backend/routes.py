@@ -79,7 +79,6 @@ from . import _host as hooks
 from . import decks, engine, library, paths, preview_tools, provision
 from ._fs import atomic_write
 from ._host import (
-    SNIFF_BYTES,
     FileTooLargeError,
     is_sensitive_path,
     path_contains_sensitive,
@@ -238,7 +237,7 @@ _BITMAP_URI_TERMINATORS: frozenset[str] = frozenset("\"'`)<>,;]}\\ \t\r\n\f\v")
 
 def _has_bitmap_signature(raw: bytes) -> bool:
     """Whether *raw*'s first bytes are a known raster signature."""
-    if sniff_raster_mime(raw[:SNIFF_BYTES]) is not None:
+    if sniff_raster_mime(raw) is not None:
         return True
     return raw[_BITMAP_FTYP_OFFSET : _BITMAP_FTYP_OFFSET + len(_BITMAP_FTYP_MAGIC)] == (
         _BITMAP_FTYP_MAGIC
