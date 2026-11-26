@@ -24,6 +24,12 @@ kinds of host surface:
    refused, a path reads as sensitive, a file reads as unreadable), never run
    without it. ``PORTING.md`` lists each one as a gap.
 
+3. **The public backend SDK** (``kiro_crew.apps.backend_sdk``), for a control
+   that has moved there: the raster sniffer, from App Kit level 14. It is
+   looked up the same lazy way, through :func:`_backend_sdk_attr`, which also
+   checks the level the name arrived at, and a gateway without it refuses the
+   same way.
+
 Everything else PPTX Maker used from the gateway is either replaced by the
 context above or restated in ``_compat.py``, ``_fs.py`` and ``_os_deps.py``
 (small helpers that carry no security decision).
@@ -74,6 +80,26 @@ def _host_attr(module: str, name: str) -> Any | None:
     return getattr(mod, name, None)
 
 
+#: The gateway's public backend SDK package (App Kit level 7 and later).
+BACKEND_SDK = "kiro_crew.apps.backend_sdk"
+
+#: The App Kit level that added the backend SDK's ``sniff_raster_mime``.
+RASTER_SNIFF_SDK_LEVEL = 14
+
+
+def _backend_sdk_attr(name: str, level: int) -> Any | None:
+    """``name`` from the gateway's public backend SDK, or ``None`` below *level*.
+
+    The package exists from App Kit level 7 and a name added later carries its own
+    level, so the package's ``SDK_LEVEL`` is checked as well as the name itself:
+    a gateway that reports a lower level, or none, is treated as not providing it.
+    """
+    sdk_level = _host_attr(BACKEND_SDK, "SDK_LEVEL")
+    if not isinstance(sdk_level, int) or isinstance(sdk_level, bool) or sdk_level < level:
+        return None
+    return _host_attr(BACKEND_SDK, name)
+
+
 @dataclass(frozen=True)
 class Route:
     """One ``hooks.routes`` record, accepted structurally by the gateway.
@@ -116,10 +142,12 @@ _CAPABILITIES: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "deck links, deck ids and slide slugs are refused: this Kiro Crew has no exfil scan",
         (("kiro_crew.security", "scan_exfiltration_urls"),),
     ),
-    (
-        "pictures inside slide previews are blanked: this Kiro Crew has no raster sniffer",
-        (("kiro_crew.messaging.raster", "sniff_raster_mime"),),
-    ),
+)
+
+#: Shown when the backend SDK has no raster sniffer (App Kit level below 14).
+NO_RASTER_SNIFFER = (
+    "pictures inside slide previews are blanked: this Kiro Crew has no raster sniffer "
+    f"(App Kit level {RASTER_SNIFF_SDK_LEVEL} or later provides it)"
 )
 
 
@@ -136,6 +164,8 @@ def capability_issues(ctx: Any) -> list[str]:
     for issue, names in _CAPABILITIES:
         if any(not callable(_host_attr(module, name)) for module, name in names):
             issues.append(issue)
+    if _raster_sniffer() is None:
+        issues.append(NO_RASTER_SNIFFER)
     return issues
 
 
@@ -433,18 +463,24 @@ def path_contains_sensitive(path: str) -> bool:
     return bool(impl(path))
 
 
-#: Leading bytes :func:`sniff_raster_mime` needs, the gateway's own value.
-SNIFF_BYTES = 16
+def _raster_sniffer() -> Callable[[bytes], Any] | None:
+    """The backend SDK's ``sniff_raster_mime``, or ``None`` on a gateway below level 14."""
+    impl = _backend_sdk_attr("sniff_raster_mime", RASTER_SNIFF_SDK_LEVEL)
+    return impl if callable(impl) else None
 
 
 def sniff_raster_mime(head: bytes) -> str | None:
-    """The raster type *head* starts with, per the gateway's shared sniffer.
+    """The raster type *head* starts with, per the gateway's own sniffer.
 
-    ``None`` (not a raster) on a gateway without it, so a ``data:image/...``
-    blob is never exempted from the redaction pass on an unverified signature.
+    The public backend SDK's ``sniff_raster_mime`` (App Kit level 14), which
+    decides from the leading bytes alone. *head* is the whole candidate blob: the
+    sniffer needs at least its ``RASTER_SNIFF_BYTES`` leading bytes, and a longer
+    buffer answers the same, so no window is copied here. ``None`` (not a raster)
+    on a gateway without it, so a ``data:image/...`` blob is never exempted from
+    the redaction pass on an unverified signature.
     """
-    impl = _host_attr("kiro_crew.messaging.raster", "sniff_raster_mime")
-    if not callable(impl):
+    impl = _raster_sniffer()
+    if impl is None:
         return None
     found = impl(head)
     return found if isinstance(found, str) else None

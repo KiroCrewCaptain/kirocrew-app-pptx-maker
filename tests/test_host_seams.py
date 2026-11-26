@@ -1,10 +1,11 @@
 """Every host control PPTX Maker reaches through ``backend/_host.py`` fails closed.
 
 The gateway provides the App Kit context (owner gate, redaction, audit, data
-directory) and, for now, the security controls no seam exposes yet (the sandbox
-chokepoint, the verified downloader, the sensitive-path gate, the pinned reader,
-the raster sniffer). When one is missing, the operation that needs it is refused,
-never run without it, and ``register_routes`` says why through ``ctx.health``.
+directory), the public backend SDK's raster sniffer (App Kit level 14) and, for
+now, the security controls no seam exposes yet (the sandbox chokepoint, the
+verified downloader, the sensitive-path gate, the pinned reader). When one is
+missing, the operation that needs it is refused, never run without it, and
+``register_routes`` says why through ``ctx.health``.
 """
 
 from __future__ import annotations
@@ -55,7 +56,8 @@ class TestTheContext:
             ("kiro_crew.security", "is_sensitive_path", "sensitive-path gate"),
             ("kiro_crew.security", "path_contains_sensitive", "sensitive-path gate"),
             ("kiro_crew.hooks", "safe_read_file_bytes_nolink", "pinned file reader"),
-            ("kiro_crew.messaging.raster", "sniff_raster_mime", "raster sniffer"),
+            ("kiro_crew.apps.backend_sdk", "sniff_raster_mime", "raster sniffer"),
+            ("kiro_crew.apps.backend_sdk", "SDK_LEVEL", "raster sniffer"),
             ("kiro_crew.security", "scan_exfiltration_urls", "exfil scan"),
         ],
     )
@@ -209,9 +211,55 @@ class TestInlineBitmaps:
 
     def test_no_raster_sniffer_means_no_exemption(self, fake_host) -> None:
         """The blob is then ordinary text: scanned, and here eaten as a bare secret."""
-        fake_host.remove("kiro_crew.messaging.raster", "sniff_raster_mime")
+        fake_host.remove("kiro_crew.apps.backend_sdk", "sniff_raster_mime")
         out = routes._redact_artifact(self._doc().encode("utf-8")).decode("utf-8")
         assert "REDACTED" in out
+
+
+class TestRasterSniffThroughTheBackendSdk:
+    """The sniff is the public backend SDK's (App Kit level 14), never a private name."""
+
+    _PRIVATE = ("kiro_crew.messaging.raster", "sniff_raster_mime")
+    _PUBLIC = ("kiro_crew.apps.backend_sdk", "sniff_raster_mime")
+
+    def test_the_sdk_sniffer_answers_from_the_whole_blob(self, fake_host) -> None:
+        seen: list[bytes] = []
+
+        def sniff(head: bytes) -> str | None:
+            seen.append(head)
+            return "image/png" if head.startswith(b"\x89PNG") else None
+
+        fake_host.table[self._PUBLIC] = sniff
+        assert _host.sniff_raster_mime(_PNG) == "image/png"
+        assert seen == [_PNG]
+
+    def test_a_private_sniffer_is_never_asked(self, fake_host) -> None:
+        """A gateway that still ships the private module but no SDK name: refused."""
+        asked = mock.Mock(return_value="image/png")
+        fake_host.table[self._PRIVATE] = asked
+        fake_host.remove(*self._PUBLIC)
+        assert _host.sniff_raster_mime(_PNG) is None
+        asked.assert_not_called()
+
+    @pytest.mark.parametrize("level", [None, 0, 7, 13, True, "14"])
+    def test_a_gateway_below_level_14_refuses(
+        self, fake_host, app_ctx: FakeCtx, level: object
+    ) -> None:
+        """The level is checked as well as the name; an answer that is no integer is no level."""
+        if level is None:
+            fake_host.remove("kiro_crew.apps.backend_sdk", "SDK_LEVEL")
+        else:
+            fake_host.table[("kiro_crew.apps.backend_sdk", "SDK_LEVEL")] = level
+        assert _host.sniff_raster_mime(_PNG) is None
+        assert _host.NO_RASTER_SNIFFER in _host.capability_issues(app_ctx)
+
+    def test_a_non_string_answer_is_not_a_raster(self, fake_host) -> None:
+        fake_host.table[self._PUBLIC] = lambda _head: b"image/png"
+        assert _host.sniff_raster_mime(_PNG) is None
+
+    def test_the_shim_names_no_private_raster_module(self) -> None:
+        source = (Path(_host.__file__)).read_text(encoding="utf-8")
+        assert "kiro_crew.messaging" not in source
 
     def test_the_data_uri_scan_compiles_the_gateways_aws_key_id_spelling(self) -> None:
         """The scan must recognise exactly the ids the gateway's redaction does, so it
