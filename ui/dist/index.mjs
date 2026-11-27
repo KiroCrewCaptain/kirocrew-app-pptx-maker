@@ -5141,6 +5141,7 @@ function EngineBanner() {
 	const running = data.provision.state === "running";
 	const failed = data.provision.state === "error";
 	const lastLine = data.provision.log.split("\n").filter(Boolean).pop() ?? "";
+	const cause = failed ? data.provision.error ?? "" : "";
 	return /* @__PURE__ */ jsx(Card, {
 		className: "mb-4 animate-rise",
 		children: /* @__PURE__ */ jsxs("div", {
@@ -5158,7 +5159,12 @@ function EngineBanner() {
 							className: "text-[12px] text-muted mt-1",
 							children: i18nT("apps.pptxMaker.pptxMakerPage.engine_requirements", { tag: data.pinnedTag })
 						}),
-						lastLine && /* @__PURE__ */ jsx("div", {
+						cause ? /* @__PURE__ */ jsx(ErrorNotice, {
+							className: "mt-1",
+							message: cause,
+							messageClassName: "font-mono",
+							askAgent: true
+						}) : lastLine && /* @__PURE__ */ jsx("div", {
 							className: "text-[12px] text-muted font-mono mt-1 truncate",
 							children: lastLine
 						})

@@ -143,6 +143,10 @@ _DIR_MODE = 0o755
 #: a tarball install has no way to satisfy.
 SOURCE_MARKER_FILENAME = ".kirocrew-engine.json"
 
+#: What :func:`install_engine` logs after a failed ``validate`` or ``finalize``.
+BUILD_FAILED = "the new engine failed to build; keeping the existing one"
+FINALIZE_FAILED = "the new engine could not be finalized; kept the existing one"
+
 
 class ArchiveRejected(Exception):
     """An archive member was refused as unsafe to extract."""
@@ -455,7 +459,7 @@ def install_engine(
         # instead just "still on the previous version", the same degradation a
         # refused download already gives.
         if validate is not None and not validate(extracted):
-            log.append("the new engine failed to build; keeping the existing one")
+            log.append(BUILD_FAILED)
             return False
         # `finalize` is handed to `_swap_in` so it runs at the FINAL path while the
         # retired tree is still on disk — that is the only window where a failure can
@@ -469,7 +473,7 @@ def install_engine(
         # engine at all. That is the exact "user is left with nothing" outcome the
         # staged validation above exists to prevent, reached one step later.
         if not _swap_in(extracted, engine_root, finalize):
-            log.append("the new engine could not be finalized; kept the existing one")
+            log.append(FINALIZE_FAILED)
             return False
         log.append(f"engine installed at {ENGINE_TAG} ({ENGINE_COMMIT[:12]})")
         return True

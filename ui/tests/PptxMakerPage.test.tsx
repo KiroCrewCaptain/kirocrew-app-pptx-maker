@@ -487,6 +487,49 @@ describe('PptxMakerPage', () => {
     await waitFor(() => expect(mockApi.provisionEngine).toHaveBeenCalled())
   })
 
+  it('shows the cause of a failed install, not its last log line', async () => {
+    // Multi-line like uv's output: the last-line rule would show only the hint.
+    const cause = [
+      'dependency resolve failed: Using CPython 3.15.2',
+      "error: Distribution `pywin32==311` can't be installed",
+      'hint: pywin32 only has wheels for cp310 to cp314',
+    ].join('\n')
+    mockApi.engine.mockResolvedValue({
+      ready: false,
+      clone: true,
+      venv: false,
+      pinnedTag: 'v0.3.8',
+      provision: {
+        state: 'error',
+        log: `resolving engine dependencies…\n${cause}\nthe new engine failed to build; keeping the existing one`,
+        error: cause,
+        elapsed: 3,
+      },
+    })
+    await renderPage()
+    expect(await screen.findByText(/pywin32==311/)).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('only has wheels for cp310')
+    expect(screen.queryByText(/keeping the existing one/)).toBeNull()
+    expect(screen.getByText('Try the install again')).toBeTruthy()
+  })
+
+  it('shows the last log line of a failed install when the backend sends no error', async () => {
+    mockApi.engine.mockResolvedValue({
+      ready: false,
+      clone: true,
+      venv: false,
+      pinnedTag: 'v0.3.8',
+      provision: {
+        state: 'error',
+        log: 'resolving engine dependencies…\nthe new engine failed to build; keeping the existing one',
+        elapsed: 3,
+      },
+    })
+    await renderPage()
+    expect(await screen.findByText(/keeping the existing one/)).toBeTruthy()
+    expect(screen.queryByText(/resolving engine dependencies/)).toBeNull()
+  })
+
   it('narrates a running install instead of offering the action again', async () => {
     mockApi.engine.mockResolvedValue({
       ready: false,
