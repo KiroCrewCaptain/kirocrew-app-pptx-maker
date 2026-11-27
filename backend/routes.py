@@ -608,6 +608,7 @@ async def _handle_engine(request: web.Request) -> web.Response:
         status["provision"] = {
             "state": _engine_state.state,
             "log": _engine_state.log[-engine.LOG_TAIL_CHARS :],
+            "error": _engine_state.error[-engine.LOG_TAIL_CHARS :],
             "elapsed": _engine_state.elapsed(),
         }
     status["pinnedTag"] = provision.ENGINE_TAG
@@ -623,15 +624,22 @@ def _run_provision() -> None:
         with _engine_lock:
             _engine_state.state = "error"
             _engine_state.log = f"provisioning failed: {exc}"
+            _engine_state.error = str(exc)
         _audit("engine_provision", provision.ENGINE_TAG, "failed", error=str(exc))
         return
+    if not outcome.ok:
+        logger.warning(
+            "pptx-maker: engine provisioning failed: %s", outcome.error[-engine.LOG_TAIL_CHARS :]
+        )
     with _engine_lock:
         _engine_state.state = "done" if outcome.ok else "error"
         _engine_state.log = outcome.log
+        _engine_state.error = outcome.error
     _audit(
         "engine_provision",
         outcome.engine_tag or provision.ENGINE_TAG,
         "ok" if outcome.ok else "failed",
+        error=outcome.error,
     )
 
 
@@ -650,6 +658,7 @@ async def _handle_engine_provision(request: web.Request) -> web.Response:
             return web.json_response({"state": "running"}, status=202)
         _engine_state.state = "running"
         _engine_state.log = ""
+        _engine_state.error = ""
         _engine_state.started = time.time()
     _audit("engine_provision", provision.ENGINE_TAG, "started")
     _run_in_background(off_loop(_run_provision))

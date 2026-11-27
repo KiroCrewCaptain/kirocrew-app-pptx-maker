@@ -122,6 +122,7 @@ function EngineBanner() {
   const running = data.provision.state === 'running'
   const failed = data.provision.state === 'error'
   const lastLine = data.provision.log.split('\n').filter(Boolean).pop() ?? ''
+  const cause = failed ? (data.provision.error ?? '') : ''
 
   return (
     <Card className="mb-4 animate-rise">
@@ -146,8 +147,12 @@ function EngineBanner() {
               tag: data.pinnedTag,
             })}
           </div>
-          {lastLine && (
-            <div className="text-[12px] text-muted font-mono mt-1 truncate">{lastLine}</div>
+          {cause ? (
+            <ErrorNotice className="mt-1" message={cause} messageClassName="font-mono" askAgent />
+          ) : (
+            lastLine && (
+              <div className="text-[12px] text-muted font-mono mt-1 truncate">{lastLine}</div>
+            )
           )}
         </div>
         {!running && (

@@ -59,7 +59,13 @@ export interface EngineStatus {
   clone: boolean
   venv: boolean
   pinnedTag: string
-  provision: { state: 'idle' | 'running' | 'done' | 'error'; log: string; elapsed: number }
+  provision: {
+    state: 'idle' | 'running' | 'done' | 'error'
+    log: string
+    /** The cause of a failed run. Absent from an older backend. */
+    error?: string
+    elapsed: number
+  }
 }
 
 export interface DepsStatus {

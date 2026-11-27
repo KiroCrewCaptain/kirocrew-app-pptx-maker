@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -116,9 +117,36 @@ class ProvisionOutcome:
     ok: bool
     log: str
     engine_tag: str = ""
+    error: str = ""
 
     def to_dict(self) -> dict:
         return {"ok": self.ok, "log": self.log[-LOG_TAIL_CHARS:], "engineTag": self.engine_tag}
+
+
+# Terminal escape sequences, which uv emits when a color variable forces them.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _cause(entry: str) -> str:
+    """*entry*'s step label and its output from the first ``error:`` line, if it has one."""
+    label, sep, output = _ANSI_ESCAPE.sub("", entry).partition(": ")
+    lines = output.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("error:"):
+            return label + sep + "\n".join(lines[i:])
+    return label + sep + output
+
+
+def _failed(log: list[str]) -> ProvisionOutcome:
+    """A failed outcome whose error is the last log entry that names a cause."""
+    causes = [
+        entry
+        for entry in log
+        if entry not in (engine_source.BUILD_FAILED, engine_source.FINALIZE_FAILED)
+    ]
+    return ProvisionOutcome(
+        ok=False, log="\n".join(log), error=_cause(causes[-1]) if causes else ""
+    )
 
 
 _uv_path_cache: str | None = None
@@ -517,18 +545,18 @@ def provision() -> ProvisionOutcome:
             "reinstall with `pip install --force-reinstall uv`, or install uv "
             "yourself and put it on PATH."
         )
-        return ProvisionOutcome(ok=False, log="\n".join(log))
+        return _failed(log)
 
     # ONE call: `_ensure_engine` now builds the venv inside the staged tree before
     # swapping it in (see its comment), so a second `_ensure_venv` here would
     # re-resolve the same dependencies against the live tree for no benefit.
     if not _ensure_engine(engine_root, log, uv_bin):
-        return ProvisionOutcome(ok=False, log="\n".join(log))
+        return _failed(log)
     # An already-pinned tree short-circuits the fetch, so its venv may predate this
     # install (or a user may have removed it). Build it if it is not there.
     if not _venv_ready(engine_root):
         if not _ensure_venv(engine_root, log, uv_bin):
-            return ProvisionOutcome(ok=False, log="\n".join(log))
+            return _failed(log)
 
     # The managed `pdftoppm` launcher. It runs the engine venv's own `pypdfium2`,
     # so it only becomes installable once the venv above exists, and this is the

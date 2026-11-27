@@ -188,13 +188,15 @@ class EngineResult:
 
 @dataclass
 class ProvisionState:
-    """Progress of a background provisioning job (icon packs).
+    """Progress of a background provisioning job (the engine or its icon packs).
 
-    ``state`` is one of ``idle`` / ``running`` / ``done`` / ``error``.
+    ``state`` is one of ``idle`` / ``running`` / ``done`` / ``error``. The ``error``
+    field holds the cause of a failed engine run.
     """
 
     state: str = "idle"
     log: str = ""
+    error: str = ""
     started: float = 0.0
     per_source: dict[str, str] = field(default_factory=dict)
 
