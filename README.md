@@ -257,19 +257,25 @@ everything agent-written it serves), `ctx.audit` (the security event log) and
 `ctx.data_dir`.
 
 The engine and `uv` must run inside Kiro Crew's sandbox, the engine download must
-go through Kiro Crew's verified downloader, and every deck path and file through
-its sensitive-path gate and pinned reader; no App Kit seam offers those yet.
-`backend/_host.py` therefore looks them up in the gateway by name at the moment
-it needs them, and when one is missing it refuses the operation instead of
-running it unprotected; `register_routes` reports what is missing through the
-app's health. No other backend module names `kiro_crew`
-(`tests/test_no_host_imports.py`).
+go through Kiro Crew's verified download, and every deck path and file through its
+sensitive-path gate and no-follow reader. `backend/_host.py` takes each of these
+from Kiro Crew's public seams only, at the moment it needs it: the context's
+`ctx.verified_download` and the public backend SDK (`kiro_crew.apps.backend_sdk`).
+No private `kiro_crew` name is used, and no other backend module names `kiro_crew`
+(`tests/test_no_host_imports.py`). When a seam is missing it refuses the operation
+instead of running it unprotected, and `register_routes` reports what is missing
+through the app's health.
 
-The check that keeps pictures inside slide previews (is this inline image really
-a picture?) uses Kiro Crew's public backend SDK
-(`kiro_crew.apps.backend_sdk.sniff_raster_mime`), which App Kit level 14 adds.
-On an older Kiro Crew those pictures are blanked instead, and the app's health
-says why; everything else works as before.
+Every part of the app works on Kiro Crew with App Kit level 20 or later. An older
+Kiro Crew keeps what its level offers and refuses the rest:
+
+| App Kit level | Adds | Below it |
+|---|---|---|
+| 7 | The sandboxed run, the sensitive-path gate and the no-follow reader | Nothing is spawned, every deck path is refused and every deck file reads as unreadable |
+| 14 | The raster sniffer that keeps pictures inside slide previews | Those pictures are blanked |
+| 17 | The exfil and credential scans, and the gateway's credential marker | Deck links, deck ids and slide slugs are refused, and pictures are blanked |
+| 18 | The `uv` and agent-template values the gateway renders | The app restates what an older gateway renders: its own `PATH` and `uv` |
+| 20 | The verified download | The engine install is refused; an installed engine keeps working |
 
 The agent templates carry only the host placeholders Kiro Crew computes for every
 app: `{APP_ROOT}`, `{APP_DATA}`, `{UV_BIN}`, `{HOST_PATH}` and `{PATH_SEP}`. The

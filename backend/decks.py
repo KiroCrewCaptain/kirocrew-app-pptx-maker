@@ -174,7 +174,7 @@ def _read_deck_text(path: Path, deck_dir: Path) -> str | None:
     `os.link("~/.ssh/config", "specs/brief.md")` previewed SSH configuration onto the
     Deck list, which every visit to the app loads. Verified before this guard.
 
-    `hooks.safe_read_file_bytes_nolink` rejects `st_nlink > 1` on the OPENED descriptor
+    `hooks.read_bytes_nofollow` rejects `st_nlink > 1` on the OPENED descriptor
     (its documented R30 F1 case) and, with `within_root`, requires that descriptor's
     real path to sit inside the deck dir — neither of which a path check can express.
 
@@ -184,7 +184,7 @@ def _read_deck_text(path: Path, deck_dir: Path) -> str | None:
     `errors="replace"` preserves each caller's existing degrade-not-raise behaviour.
     """
     try:
-        raw = hooks.safe_read_file_bytes_nolink(str(path), within_root=str(deck_dir))
+        raw = hooks.read_bytes_nofollow(str(path), within_root=str(deck_dir))
     except FileTooLargeError:
         return None
     if raw is None:

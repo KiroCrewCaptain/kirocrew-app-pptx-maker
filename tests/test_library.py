@@ -96,7 +96,7 @@ class TestStyleReadsRejectHardlinks(_LibraryFixture):
     ``resolve()`` returns the path itself, so every path-based check passes. The
     styles dir is agent-writable, so the agent can create one and point it at a
     credential file. Both read paths therefore go through
-    ``safe_read_file_bytes_nolink``, which rejects ``st_nlink > 1`` on the OPENED
+    ``read_bytes_nofollow``, which rejects ``st_nlink > 1`` on the OPENED
     descriptor.
     """
 

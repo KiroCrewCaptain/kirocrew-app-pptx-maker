@@ -1,20 +1,20 @@
 """A stand-in for the Kiro Crew gateway, so the tests need no Kiro Crew install.
 
-``backend/_host.py`` resolves every host control through one function,
+``backend/_host.py`` resolves every backend SDK name through one function,
 ``_host._host_attr(module, name)``. :class:`FakeHost` answers it from a table of
-small, offline implementations; a test that needs a different host (one without
-the sandbox, one whose sandbox refuses) edits the table through the ``fake_host``
-fixture.
+small, offline implementations keyed ``(BACKEND_SDK, name)``; a test that needs a
+different host (one without the sandbox, one whose sandbox refuses, one at a
+lower App Kit level) edits the table through the ``fake_host`` fixture.
 
 These fakes stand in for the host's controls, they do not re-implement them: the
 sandbox fake runs the argv unwrapped, the sensitive-path fake knows a handful of
-names, the redaction fake knows the credential shapes these tests use. What the
-tests check is that PPTX Maker routes every spawn, download, path, read and
-served text through the host and refuses when the host does. The controls
-themselves are tested in Kiro Crew.
+names, the redaction and credential fakes know the credential shapes these tests
+use. What the tests check is that PPTX Maker routes every spawn, download, path,
+read and served text through the host and refuses when the host does. The
+controls themselves are tested in Kiro Crew.
 
 :class:`FakeCtx` is the ``AppContext`` the gateway hands the hooks at App Kit
-level 1, with the fields PPTX Maker reads.
+level 20, with the fields PPTX Maker reads, ``verified_download`` among them.
 """
 
 from __future__ import annotations
@@ -22,22 +22,26 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import secrets
 import stat
 import subprocess
 import sys
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Iterator
 
 from aiohttp import web
+
+#: The package every lookup names.
+BACKEND_SDK = "kiro_crew.apps.backend_sdk"
 
 # ── sandbox ─────────────────────────────────────────────────────────────────
 
 
 class SandboxUnavailableError(RuntimeError):
-    """The host's own refusal type (``kiro_crew.sandbox.SandboxUnavailableError``)."""
+    """The host's own refusal type (the backend SDK's ``SandboxUnavailableError``)."""
 
     def __init__(self, message: str = "no sandbox backend", *, kind: str = "no_backend") -> None:
         super().__init__(message)
@@ -51,30 +55,63 @@ class SpawnRecord:
     kwargs: dict[str, Any]
 
 
+#: The ``subprocess.run`` keywords the backend SDK's ``run_sandboxed`` forwards; any
+#: other keyword is a ``TypeError`` there, so it is one here too.
+RUN_KWARGS = frozenset(
+    {
+        "input",
+        "capture_output",
+        "timeout",
+        "check",
+        "cwd",
+        "stdin",
+        "stdout",
+        "stderr",
+        "text",
+        "encoding",
+        "errors",
+        "universal_newlines",
+        "bufsize",
+    }
+)
+
+
 class FakeSandbox:
-    """The host's spawn chokepoint: records each call, returns the argv unwrapped."""
+    """The host's sandboxed run: records each call, then runs the argv.
+
+    ``wrap`` stands for the sandbox wrapper the host puts around the argv (none by
+    default); ``refuse`` is raised before anything runs, as the host's preparation
+    raises.
+    """
 
     def __init__(self) -> None:
         self.calls: list[SpawnRecord] = []
         self.refuse: BaseException | None = None
+        self.wrap: Callable[[list[str]], list[str]] = list
 
-    def sandboxed_spawn_argv(
+    def run_sandboxed(
         self,
         argv: list[str],
-        mode: str = "standard",
         *,
+        mode: str = "standard",
         env: dict[str, str] | None = None,
-        **kw: Any,
-    ) -> tuple[list[str], dict[str, str], str | None]:
-        self.calls.append(SpawnRecord(list(argv), mode, dict(kw, env=env)))
+        strip_python_env: bool = False,
+        **run_kwargs: Any,
+    ) -> subprocess.CompletedProcess:
+        refused = sorted(set(run_kwargs) - RUN_KWARGS)
+        if refused:
+            raise TypeError(f"run_sandboxed does not accept {', '.join(refused)}")
+        self.calls.append(
+            SpawnRecord(
+                list(argv), mode, dict(run_kwargs, env=env, strip_python_env=strip_python_env)
+            )
+        )
         if self.refuse is not None:
             raise self.refuse
-        return list(argv), dict(env if env is not None else os.environ), None
-
-
-def run_limited(argv: Any, **kwargs: Any) -> subprocess.CompletedProcess:
-    """``subprocess.run`` (the host adds resource limits after ``exec``)."""
-    return subprocess.run(argv, **kwargs)  # noqa: S603 - test-only, fixed argv
+        scrubbed = dict(env if env is not None else os.environ)
+        return subprocess.run(  # noqa: S603 - test-only, fixed argv
+            self.wrap(list(argv)), env=scrubbed, **run_kwargs
+        )
 
 
 # ── security ────────────────────────────────────────────────────────────────
@@ -88,7 +125,7 @@ def is_sensitive_path(path: str, base_dir: str | None = None) -> bool:
     return bool(parts & SENSITIVE_COMPONENTS)
 
 
-def path_contains_sensitive(dir_str: str, base_dir: str | None = None, **_kw: Any) -> bool:
+def contains_sensitive_path(dir_str: str) -> bool:
     """True when a sensitive home location lies UNDER *dir_str* (the home itself, a parent)."""
     if not dir_str:
         return False
@@ -105,7 +142,7 @@ def path_contains_sensitive(dir_str: str, base_dir: str | None = None, **_kw: An
     return False
 
 
-REDACTED_CREDENTIAL_TAG = "[REDACTED: credential]"
+CREDENTIAL_PLACEHOLDER = "[REDACTED: credential]"
 
 #: The credential shapes the gateway's redactor recognises that these tests use.
 #: Marker tokens are matched at their real lengths, so a SHORT ``ghp_`` body
@@ -138,14 +175,19 @@ def _looks_bare_secret(run: str) -> bool:
 
 
 def fake_redact(text: str) -> str:
-    out = _CREDENTIAL_RE.sub(REDACTED_CREDENTIAL_TAG, text)
+    out = _CREDENTIAL_RE.sub(CREDENTIAL_PLACEHOLDER, text)
     return _BARE_RUN_RE.sub(
-        lambda m: REDACTED_CREDENTIAL_TAG if _looks_bare_secret(m.group(0)) else m.group(0), out
+        lambda m: CREDENTIAL_PLACEHOLDER if _looks_bare_secret(m.group(0)) else m.group(0), out
     )
 
 
+def iter_credential_matches(text: str) -> Iterator[re.Match[str]]:
+    """The host's credential scan: each credential-shaped run, with no bare-secret guess."""
+    return _CREDENTIAL_RE.finditer(text)
+
+
 class FileTooLargeError(Exception):
-    """The host's ``kiro_crew.hooks.FileTooLargeError``."""
+    """The host's ``FileTooLargeError`` (the backend SDK's)."""
 
 
 def fd_real_path(fd: int) -> str | None:
@@ -182,8 +224,12 @@ def fd_real_path(fd: int) -> str | None:
     return None
 
 
-def safe_read_file_bytes_nolink(
-    raw: str, within_root: str | None = None, *, max_bytes: int | None = None, **_kw: Any
+def read_bytes_nofollow(
+    raw: str,
+    *,
+    within_root: str | None = None,
+    max_bytes: int | None = None,
+    within_root_is_canonical: bool = False,
 ) -> bytes | None:
     """No-follow, hard-link-refusing, contained (by the OPENED descriptor), capped read."""
     try:
@@ -241,19 +287,16 @@ def sniff_raster_mime(head: bytes) -> str | None:
     return None
 
 
-AWS_KEY_ID = "(?:AKIA|ASIA)[A-Z0-9]{16}"
+# ── content checks ──────────────────────────────────────────────────────────
 
 
-# ── verified downloader ─────────────────────────────────────────────────────
-
-
-#: The URLs :func:`scan_exfiltration_urls` flags: a query long enough to carry data out.
+#: The URLs :func:`contains_exfiltration_url` flags: a query long enough to carry data out.
 _EXFIL_URL_RE = re.compile(r"https?://[^\s/?#]+[^\s?#]*\?[^\s#]{40,}")
 
 
-def scan_exfiltration_urls(text: str) -> list[str]:
+def contains_exfiltration_url(text: str) -> bool:
     """The host's exfil scan, for the one shape these tests use: a long query."""
-    return _EXFIL_URL_RE.findall(text)
+    return bool(_EXFIL_URL_RE.search(text))
 
 
 def redact_url(url: str) -> str:
@@ -267,76 +310,112 @@ def redact_url(url: str) -> str:
     return f"{parsed.scheme}://{host}{port}"
 
 
-def download_to(
-    archive: Path,
-    url: str,
-    *,
-    sha256: str,
-    timeout_secs: float,
-    chunk_bytes: int,
-    min_bytes: int = 0,
-    allow_cross_host_redirects: bool = False,
-    label: str = "",
-    **_kw: Any,
-) -> tuple[bool, str]:
-    """Stream *url* beside *archive*, hash it, rename only on a digest match. Never raises."""
-    staging = archive.with_name(archive.name + ".part")
+# ── verified download ───────────────────────────────────────────────────────
+
+
+class VerifiedDownloadError(OSError):
+    """The host's ``VerifiedDownloadError``: nothing was installed."""
+
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def verified_download(data_dir: Path, url: str, dest: str, *, sha256: str, size: int) -> Path:
+    """``ctx.verified_download``: *dest* inside *data_dir*, installed only on an exact match.
+
+    The same refusals the host makes before it opens anything (an https url, a
+    64-hex digest, a positive size, a relative *dest* in a folder that exists), then
+    a transfer into a staging file beside *dest* that is renamed onto it only when
+    the length is *size* and the digest is *sha256*. Every failure raises
+    :class:`VerifiedDownloadError` naming the url's host only, and leaves nothing.
+    """
+    if not isinstance(url, str) or not url.lower().startswith("https://"):
+        raise ValueError("url must be an https:// URL")
+    if not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256):
+        raise ValueError("sha256 must be the file's 64-character hex SHA-256 digest")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        raise ValueError("size must be the file's exact length in bytes")
+    relative = PurePosixPath(dest)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        raise ValueError("dest must be a path relative to the app's data directory")
+    folder = Path(data_dir).joinpath(*relative.parts[:-1])
+    if not folder.is_dir() or folder.is_symlink():
+        raise VerifiedDownloadError(
+            "the destination folder must be a real folder inside the app's data directory"
+        )
+    target = folder / relative.name
+    staging = folder / f".{secrets.token_hex(16)}.kc-dl"
     digest = hashlib.sha256()
-    size = 0
+    received = 0
     try:
         opener = urllib.request.build_opener()
-        with opener.open(url, timeout=timeout_secs) as response, open(staging, "wb") as out:
+        with opener.open(url, timeout=60) as response, open(staging, "xb") as out:
             while True:
-                chunk = response.read(chunk_bytes)
+                chunk = response.read(1 << 16)
                 if not chunk:
                     break
+                received += len(chunk)
+                if received > size:
+                    raise VerifiedDownloadError(f"the download is larger than {size} bytes")
                 out.write(chunk)
                 digest.update(chunk)
-                size += len(chunk)
-        if size < min_bytes:
-            staging.unlink(missing_ok=True)
-            return False, f"download too small ({size} bytes) from {redact_url(url)}"
-        if digest.hexdigest() != sha256:
-            staging.unlink(missing_ok=True)
-            return False, f"sha256 mismatch (expected {sha256[:16]}…) from {redact_url(url)}"
-        os.replace(staging, archive)
-        return True, ""
-    except Exception as exc:  # noqa: BLE001 - the host's downloader never raises
+        if received < size:
+            raise VerifiedDownloadError(f"downloaded file too small ({received} bytes)")
+        got = digest.hexdigest()
+        if got != sha256:
+            raise VerifiedDownloadError(
+                f"sha256 mismatch: got {got[:16]}…, expected {sha256[:16]}… (corrupt download)"
+            )
+        os.replace(staging, target)
+        return target
+    except VerifiedDownloadError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the host reports every transport failure
+        raise VerifiedDownloadError(
+            f"HTTPS download failed: {type(exc).__name__} from {redact_url(url)}"
+        ) from None
+    finally:
         staging.unlink(missing_ok=True)
-        return False, f"download failed ({type(exc).__name__}) from {redact_url(url)}"
 
 
 # ── the host table ──────────────────────────────────────────────────────────
 
 
 class FakeHost:
-    """Answers ``_host._host_attr`` from :attr:`table`."""
+    """Answers ``_host._host_attr`` from :attr:`table`, a backend SDK at App Kit level 20.
+
+    ``agent_template_host_values`` is left out on purpose: without it the app
+    restates what an older gateway renders into ``{HOST_PATH}`` and ``{UV_BIN}``,
+    which is what most tests pin. The tests of the gateway's own values add it.
+    """
 
     def __init__(self) -> None:
         self.sandbox = FakeSandbox()
         self.table: dict[tuple[str, str], Any] = {
-            ("kiro_crew.sandbox", "sandboxed_spawn_argv"): self.sandbox.sandboxed_spawn_argv,
-            ("kiro_crew.sandbox", "run_limited"): run_limited,
-            ("kiro_crew.sandbox", "SandboxUnavailableError"): SandboxUnavailableError,
-            ("kiro_crew.executors", "subprocess_executor"): lambda: None,
-            ("kiro_crew.security", "is_sensitive_path"): is_sensitive_path,
-            ("kiro_crew.security", "path_contains_sensitive"): path_contains_sensitive,
-            ("kiro_crew.security", "REDACTED_CREDENTIAL_TAG"): REDACTED_CREDENTIAL_TAG,
-            ("kiro_crew.security", "scan_exfiltration_urls"): scan_exfiltration_urls,
-            ("kiro_crew.hooks", "safe_read_file_bytes_nolink"): safe_read_file_bytes_nolink,
-            ("kiro_crew.hooks", "FileTooLargeError"): FileTooLargeError,
-            ("kiro_crew.apps.backend_sdk", "SDK_LEVEL"): 14,
-            ("kiro_crew.apps.backend_sdk", "sniff_raster_mime"): sniff_raster_mime,
-            ("kiro_crew.credential_patterns", "AWS_KEY_ID"): AWS_KEY_ID,
-            ("kiro_crew.asset_downloader", "download_to"): download_to,
-            ("kiro_crew.env", "resolve_uv"): lambda: "/opt/fake-host/bin/uv",
+            (BACKEND_SDK, "SDK_LEVEL"): 20,
+            (BACKEND_SDK, "run_sandboxed"): self.sandbox.run_sandboxed,
+            (BACKEND_SDK, "SandboxUnavailableError"): SandboxUnavailableError,
+            (BACKEND_SDK, "is_sensitive_path"): is_sensitive_path,
+            (BACKEND_SDK, "contains_sensitive_path"): contains_sensitive_path,
+            (BACKEND_SDK, "read_bytes_nofollow"): read_bytes_nofollow,
+            (BACKEND_SDK, "FileTooLargeError"): FileTooLargeError,
+            (BACKEND_SDK, "sniff_raster_mime"): sniff_raster_mime,
+            (BACKEND_SDK, "CREDENTIAL_PLACEHOLDER"): CREDENTIAL_PLACEHOLDER,
+            (BACKEND_SDK, "contains_exfiltration_url"): contains_exfiltration_url,
+            (BACKEND_SDK, "iter_credential_matches"): iter_credential_matches,
+            (BACKEND_SDK, "uv_executable"): lambda: "/opt/fake-host/bin/uv",
         }
 
     def attr(self, module: str, name: str) -> Any | None:
         return self.table.get((module, name))
 
-    def remove(self, module: str, name: str) -> None:
-        self.table.pop((module, name), None)
+    def remove(self, name: str) -> None:
+        """Take the backend SDK name *name* away, as an older gateway lacks it."""
+        self.table.pop((BACKEND_SDK, name), None)
+
+    def set(self, name: str, value: Any) -> None:
+        """Serve *value* as the backend SDK name *name*."""
+        self.table[(BACKEND_SDK, name)] = value
 
 
 # ── the app context ─────────────────────────────────────────────────────────
@@ -395,22 +474,33 @@ OWNER = "owner-user"
 
 @dataclass
 class FakeCtx:
-    """The gateway's ``AppContext`` at App Kit level 1, as PPTX Maker reads it.
+    """The gateway's ``AppContext`` at App Kit level 20, as PPTX Maker reads it.
 
     ``require_owner`` is the host predicate: the configured owner, as a dashboard
     subject (an empty app claim). Everyone else gets the host's 403
     ``owner_only``, and the denial is audited as ``pptx-maker.<operation>``.
+    ``verified_download`` is :func:`verified_download` into :attr:`data_dir`; each
+    call is recorded in :attr:`downloads`, and :attr:`download_refusal` is raised
+    instead when set.
     """
 
     data_dir: Path
     name: str = "pptx-maker"
-    sdk_level: int = 1
+    sdk_level: int = 20
     scrub: FakeScrub = field(default_factory=FakeScrub)
     audit: FakeAudit = field(default_factory=FakeAudit)
     health: FakeHealth = field(default_factory=FakeHealth)
     owner: str = OWNER
     denials: list[str] = field(default_factory=list)
     owner_calls: list[str] = field(default_factory=list)
+    downloads: list[dict[str, Any]] = field(default_factory=list)
+    download_refusal: BaseException | None = None
+
+    def verified_download(self, url: str, dest: str, *, sha256: str, size: int) -> Path:
+        self.downloads.append({"url": url, "dest": dest, "sha256": sha256, "size": size})
+        if self.download_refusal is not None:
+            raise self.download_refusal
+        return verified_download(self.data_dir, url, dest, sha256=sha256, size=size)
 
     async def require_owner(
         self, request: web.Request, operation: str

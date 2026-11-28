@@ -224,17 +224,26 @@ class TestResolveUv:
 
     @pytest.fixture
     def no_host_resolver(self, fake_host):
-        fake_host.remove("kiro_crew.env", "resolve_uv")
+        fake_host.remove("uv_executable")
 
     def test_the_gateways_resolver_wins(self, fake_host):
         """The value the gateway renders into `{UV_BIN}` is the one provisioning uses."""
-        fake_host.table[("kiro_crew.env", "resolve_uv")] = lambda: "/opt/gateway/bin/uv"
+        fake_host.set("uv_executable", lambda: "/opt/gateway/bin/uv")
         with mock.patch.object(_host.shutil, "which") as which:
             assert provision.resolve_uv() == "/opt/gateway/bin/uv"
         assert not which.called
 
+    def test_a_resolver_below_level_18_is_not_asked(self, fake_host):
+        """The SDK publishes `uv_executable` at level 18; below it the ladder runs here."""
+        asked = mock.Mock(return_value="/opt/gateway/bin/uv")
+        fake_host.set("uv_executable", asked)
+        fake_host.set("SDK_LEVEL", 17)
+        with mock.patch.object(_host.shutil, "which", return_value="/usr/local/bin/uv"):
+            assert provision.resolve_uv() == "/usr/local/bin/uv"
+        asked.assert_not_called()
+
     def test_a_gateway_that_finds_no_uv_is_believed(self, fake_host):
-        fake_host.table[("kiro_crew.env", "resolve_uv")] = lambda: None
+        fake_host.set("uv_executable", lambda: None)
         with mock.patch.object(_host.shutil, "which", return_value="/usr/bin/uv"):
             assert provision.resolve_uv() is None
 
@@ -316,7 +325,7 @@ class TestResolveUv:
     def test_the_resolved_path_is_cached(self, fake_host):
         """Called on every provision, and the answer cannot change in-process."""
         locator = mock.Mock(return_value="/opt/gateway/bin/uv")
-        fake_host.table[("kiro_crew.env", "resolve_uv")] = locator
+        fake_host.set("uv_executable", locator)
         assert provision.resolve_uv() == "/opt/gateway/bin/uv"
         assert provision.resolve_uv() == "/opt/gateway/bin/uv"
         assert locator.call_count == 1
@@ -328,18 +337,14 @@ class TestRunSandboxing:
 
     def test_spawns_through_the_credential_scrubbing_chokepoint(self, tmp_path: Path):
         """Not a bare `subprocess.run`: the child must get the scrubbed env from
-        `sandboxed_spawn_argv`, or it inherits cloud creds and SSH_AUTH_SOCK."""
-        scrubbed = {"PATH": "/usr/bin"}
-        with (
-            mock.patch.object(
-                provision, "sandboxed_spawn_argv", return_value=(["/opt/uv", "x"], scrubbed, None)
-            ) as chokepoint,
-            mock.patch.object(provision, "run_limited") as run,
-        ):
-            run.return_value = mock.Mock(returncode=0, stdout="out", stderr="")
+        the sandboxed run, or it inherits cloud creds and SSH_AUTH_SOCK."""
+        with mock.patch.object(provision, "run_sandboxed") as chokepoint:
+            chokepoint.return_value = mock.Mock(returncode=0, stdout="out", stderr="")
             provision._run(["/opt/uv", "x"], cwd=str(tmp_path), timeout=5)
+        assert chokepoint.call_args.args == (["/opt/uv", "x"],)
         assert chokepoint.call_args.kwargs["strip_python_env"] is True
-        assert run.call_args.kwargs["env"] == scrubbed
+        # No environment of its own: the chokepoint scrubs the gateway's.
+        assert "env" not in chokepoint.call_args.kwargs
         # STRICT, not the `standard` default. Scrubbing the env stops the child
         # INHERITING a credential; it does not stop it READING one, and standard
         # mode leaves ~/.aws and ~/.ssh visible so the AWS CLI and git-over-SSH
@@ -349,14 +354,14 @@ class TestRunSandboxing:
 
     def test_a_gateway_without_the_sandbox_runs_nothing(self, tmp_path: Path, fake_host):
         """Fail closed: no sandboxed launch, no `uv` over a third-party tree."""
-        fake_host.remove("kiro_crew.sandbox", "sandboxed_spawn_argv")
+        fake_host.remove("run_sandboxed")
         with mock.patch.object(subprocess, "run") as run:
             with pytest.raises(_host.SandboxUnavailableError):
                 provision._run(["/opt/uv", "sync"], cwd=str(tmp_path), timeout=5)
         assert not run.called
 
-    def test_a_gateway_without_resource_limits_runs_nothing(self, tmp_path: Path, fake_host):
-        fake_host.remove("kiro_crew.sandbox", "run_limited")
+    def test_a_gateway_below_level_7_runs_nothing(self, tmp_path: Path, fake_host):
+        fake_host.set("SDK_LEVEL", 6)
         with mock.patch.object(subprocess, "run") as run:
             with pytest.raises(_host.SandboxUnavailableError):
                 provision._run(["/opt/uv", "sync"], cwd=str(tmp_path), timeout=5)
@@ -365,50 +370,25 @@ class TestRunSandboxing:
     def test_a_timeout_is_reported_not_raised(self, tmp_path: Path):
         """Provisioning must report, not explode: a hung `uv` becomes a failed
         step with a message the UI can show."""
-        with (
-            mock.patch.object(provision, "sandboxed_spawn_argv", return_value=(["uv"], {}, None)),
-            mock.patch.object(
-                provision,
-                "run_limited",
-                side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=7),
-            ),
+        with mock.patch.object(
+            provision,
+            "run_sandboxed",
+            side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=7),
         ):
             code, out = provision._run(["uv", "sync"], cwd=str(tmp_path), timeout=7)
         assert code == 1
         assert "timed out" in out
 
     def test_a_missing_binary_is_reported_not_raised(self, tmp_path: Path):
-        with (
-            mock.patch.object(provision, "sandboxed_spawn_argv", return_value=(["uv"], {}, None)),
-            mock.patch.object(provision, "run_limited", side_effect=OSError("No such file")),
-        ):
+        with mock.patch.object(provision, "run_sandboxed", side_effect=OSError("No such file")):
             code, out = provision._run(["uv", "sync"], cwd=str(tmp_path), timeout=7)
         assert code == 1
         assert "could not be run" in out
 
-    def test_the_sandbox_profile_is_always_cleaned_up(self, tmp_path: Path):
-        """The chokepoint may hand back a temp profile path; leaking one per
-        spawn would litter the temp dir on every provision."""
-        profile = tmp_path / "sandbox.sb"
-        profile.write_text("(version 1)", encoding="utf-8")
-        with (
-            mock.patch.object(
-                provision, "sandboxed_spawn_argv", return_value=(["/opt/uv"], {}, str(profile))
-            ),
-            mock.patch.object(provision, "run_limited", side_effect=OSError("boom")),
-        ):
-            provision._run(["/opt/uv"], cwd=str(tmp_path), timeout=5)
-        assert not profile.exists()
-
     def test_output_merges_both_streams(self, tmp_path: Path):
         """`uv` splits its diagnostics across stdout/stderr, so the log the user
         is shown has to carry both."""
-        with (
-            mock.patch.object(
-                provision, "sandboxed_spawn_argv", return_value=(["/opt/uv"], {}, None)
-            ),
-            mock.patch.object(provision, "run_limited") as run,
-        ):
+        with mock.patch.object(provision, "run_sandboxed") as run:
             run.return_value = mock.Mock(returncode=2, stdout="on-out\n", stderr="on-err")
             code, out = provision._run(["/opt/uv"], cwd=str(tmp_path), timeout=5)
         assert code == 2
@@ -523,22 +503,27 @@ def _sdpm_env(data: dict) -> dict:
 
 
 class TestOnAGatewayThatRendersAFixedLaunch:
-    """A current Kiro Crew renders ``{HOST_PATH}`` from a fixed set of directories,
-    never its own ``PATH``, and ``{UV_BIN}`` through its install's stable link
-    (``kiro_crew.apps.agent_template_values``). The rendered ``sdpm`` launch is what
-    an operator approves when they share it, so it must not move when the gateway
-    starts from another shell or an update moves the install. This app's statement
-    of the contract follows the gateway's values, and ``/deps`` searches the same
-    directories the MCP server's ``PATH`` lists."""
+    """A Kiro Crew at App Kit level 18 or later says what it renders into
+    ``{HOST_PATH}`` and ``{UV_BIN}`` (the backend SDK's
+    ``agent_template_host_values``, the function its renderer calls). The rendered
+    ``sdpm`` launch is what an operator approves when they share it, so this app's
+    statement of the contract must be the gateway's values, not a ``PATH`` of its
+    own, and ``/deps`` searches the same directories the MCP server's ``PATH``
+    lists. A gateway that renders a fixed set of directories stands in here, so a
+    value read from this process's own ``PATH`` would show."""
 
     @pytest.fixture(autouse=True)
     def _gateway(self, fake_host, tmp_path: Path) -> None:
         self.fixed = tmp_path / "fixed-bin"
         self.fixed.mkdir()
         fixed = str(self.fixed)
-        fake_host.table[("kiro_crew.apps.agent_template_values", "host_path")] = lambda: fixed
-        fake_host.table[("kiro_crew.apps.agent_template_values", "uv_bin")] = (
-            lambda: "/opt/crew-venv-current/bin/uv"
+        fake_host.set(
+            "agent_template_host_values",
+            lambda: {
+                "{HOST_PATH}": fixed,
+                "{UV_BIN}": "/opt/crew-venv-current/bin/uv",
+                "{PATH_SEP}": os.pathsep,
+            },
         )
 
     def test_the_host_path_does_not_follow_the_gateways_own_path(
@@ -1098,7 +1083,7 @@ class TestTheProvisionLogIsDecodedAsUtf8:
 
     The child is ``uv``, which this module's own docstring calls "a static Rust
     binary": it writes UTF-8, not the console code page. But
-    ``run_limited(..., text=True)`` with no ``encoding=`` decodes with
+    ``subprocess.run(..., text=True)`` with no ``encoding=`` decodes with
     ``locale.getpreferredencoding()``, which on Windows is the legacy ANSI code
     page. uv's output carries package names and absolute paths under the user's
     data home, so a non-ASCII account name is enough to reach this.
@@ -1129,9 +1114,10 @@ class TestTheProvisionLogIsDecodedAsUtf8:
         with pytest.raises(UnicodeDecodeError):
             self.PAYLOAD.decode("utf-8")  # guard the guard
 
-        with mock.patch.object(
-            provision, "sandboxed_spawn_argv", return_value=(self._argv(), None, None)
-        ):
+        def run(_argv, *, mode="standard", strip_python_env=False, **kw):
+            return subprocess.run(self._argv(), **kw)  # noqa: S603 - test-only, fixed argv
+
+        with mock.patch.object(provision, "run_sandboxed", side_effect=run):
             code, out = provision._run(self._argv(), cwd=str(tmp_path), timeout=30)
 
         assert code == 0

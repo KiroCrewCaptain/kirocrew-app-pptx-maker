@@ -4,7 +4,7 @@ The gateway loads hook files into a synthetic package named after the app, so
 the backend never needs to be on ``sys.path`` there. A plain pytest run has no
 such loader, so the app root is put on the path for the test session only.
 
-Every test runs against :class:`fakehost.FakeHost` (the host controls
+Every test runs against :class:`fakehost.FakeHost` (the backend SDK names
 ``backend/_host.py`` resolves) and a bound :class:`fakehost.FakeCtx` whose
 ``data_dir`` is a fresh temporary directory, so no test reads or writes a real
 data home and none needs Kiro Crew installed. ``XDG_CONFIG_HOME`` and
@@ -27,7 +27,7 @@ for entry in (str(APP_ROOT), str(TESTS)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
-from backend import _host, provision, routes  # noqa: E402
+from backend import _host, provision  # noqa: E402
 from fakehost import FakeCtx, FakeHost  # noqa: E402
 
 #: The real lookup, captured before any test replaces it with the fake host's.
@@ -62,7 +62,6 @@ def app_ctx(
     previous = _host.bound()
     _host.bind(ctx)
     provision.reset_uv_cache()
-    routes._encoded_credential_cache.clear()
     yield ctx
     _host.bind(previous)
     provision.reset_uv_cache()

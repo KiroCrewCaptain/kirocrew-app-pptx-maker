@@ -951,7 +951,7 @@ class TestConfigRoutes(_RoutesFixture):
         """
         target = self.tmp / "cfg-sensitive" / "config.json"
         # `~` is included deliberately: it is not itself sensitive, so only the
-        # `path_contains_sensitive` half of the check refuses it — a root that would
+        # `contains_sensitive_path` half of the check refuses it — a root that would
         # make every deck a sibling of `.ssh` / `.aws`.
         for value in ("~/.ssh", "~/.aws", "~/.ssh/decks", "~"):
             with _enabled(True), mock.patch.object(
@@ -1903,7 +1903,7 @@ class TestReadArtifactWorker(unittest.TestCase):
         served that directory's file to the browser.
 
         The swap is injected inside the `resolve_deck_file` call itself, which is
-        exactly the window a real racing writer has. `safe_read_file_bytes_nolink`
+        exactly the window a real racing writer has. `read_bytes_nofollow`
         closes it by validating the OPENED DESCRIPTOR's real path against
         `within_root`, so the inode checked is the inode read.
 

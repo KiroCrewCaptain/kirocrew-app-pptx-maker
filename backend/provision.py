@@ -43,7 +43,7 @@ from pathlib import Path
 from . import engine, engine_source, paths
 from ._fs import atomic_write
 from ._host import resolve_uv as _shared_resolve_uv
-from ._host import run_limited, sandboxed_spawn_argv, template_host_path, template_uv_bin
+from ._host import run_sandboxed, template_host_path, template_uv_bin
 from .engine import UTF8_TEXT
 
 logger = logging.getLogger("kirocrew.app.pptx-maker")
@@ -129,10 +129,10 @@ def resolve_uv() -> str | None:
     """Absolute path to a usable ``uv``, or ``None`` when genuinely absent.
 
     The ladder itself — ``uv.find_uv_bin()`` from the declared wheel, then
-    ``shutil.which("uv")``, never raising — is the gateway's own resolver
-    (``_host.resolve_uv``), so the minimal-``PATH`` case (an installed
-    launchd/systemd gateway) is handled the way the gateway handles it for the
-    agents' ``{UV_BIN}``.
+    ``shutil.which("uv")``, never raising — is the gateway's own resolver (the
+    backend SDK's ``uv_executable``, through ``_host.resolve_uv``), so the
+    minimal-``PATH`` case (an installed launchd/systemd gateway) is handled the way
+    the gateway handles it for the agents' ``{UV_BIN}``.
 
     Cached process-wide: this runs on every provision and the answer cannot
     change within a process (the interpreter's own site-packages are fixed at
@@ -149,15 +149,13 @@ def resolve_uv() -> str | None:
 def host_path() -> str:
     """What the gateway renders into ``{HOST_PATH}``.
 
-    A current Kiro Crew renders a fixed set of directories: the account's
-    tool-manager bins, the system dirs and, on Windows, LibreOffice's fixed install
-    roots, never its own ``PATH`` (``_host.template_host_path``). The engine MCP
-    server's launch is part of what an operator approves when they share it, and a
-    ``PATH`` copied from the gateway would have that approval refused whenever the
-    gateway is started from another shell. A tool found only on the gateway's own
-    ``PATH`` outside those directories is therefore not on the server's ``PATH``,
-    and ``/deps`` (:func:`.engine.optional_dep_path`) searches the same directories
-    so it never reports one.
+    A Kiro Crew at App Kit level 18 or later says what it renders (the backend
+    SDK's ``agent_template_host_values``, through ``_host.template_host_path``),
+    and that value is used as it is. The engine MCP server's launch is part of
+    what an operator approves when they share it, so this app's statement of it
+    must be the gateway's own, and ``/deps`` (:func:`.engine.optional_dep_path`)
+    searches the same directories so it never reports a tool that server cannot
+    run.
 
     An older Kiro Crew renders its own ``PATH``, plus the directory of a tool
     installed at a fixed platform install root that its installer does not put on
@@ -209,8 +207,9 @@ def reset_uv_cache() -> None:
 def _run(argv: list[str], *, cwd: str, timeout: int) -> tuple[int, str]:
     """Run *argv* under the shared sandbox, returning ``(exit code, output)``.
 
-    Uses the gateway's ``sandboxed_spawn_argv`` chokepoint (``_host``) so the
-    child gets a CREDENTIAL-SCRUBBED environment as well as the OS sandbox.
+    Uses the gateway's sandboxed run (the backend SDK's ``run_sandboxed``, through
+    ``_host``) so the child gets a CREDENTIAL-SCRUBBED environment as well as the
+    OS sandbox and the resource limits.
     Provisioning runs ``uv`` against a freshly-downloaded third-party tree, so
     these spawns execute third-party code and must not inherit the gateway's raw
     ``os.environ`` (cloud credentials, ``SSH_AUTH_SOCK``, bot tokens).
@@ -232,15 +231,16 @@ def _run(argv: list[str], *, cwd: str, timeout: int) -> tuple[int, str]:
     # git-over-SSH. Provisioning runs a build backend over a freshly-downloaded
     # third-party tree, which is exactly the code least entitled to either. No
     # sandbox mode restricts network, so uv still reaches the index.
-    # The chokepoint already applies the cgroup scope as its outermost layer.
-    # Wrapping again nests a second ``systemd-run --scope`` that inherits the
-    # first one's PID and collides on its auto-named unit.
-    wrapped, env, cleanup = sandboxed_spawn_argv(argv, mode="strict", strip_python_env=True)
+    # The chokepoint already applies the cgroup scope as its outermost layer and
+    # removes its own cleanup path, so *argv* goes in unwrapped. Wrapping again
+    # nests a second ``systemd-run --scope`` that inherits the first one's PID and
+    # collides on its auto-named unit.
     try:
-        proc = run_limited(  # noqa: S603 - fixed argv, no request-derived values
-            wrapped,
+        proc = run_sandboxed(  # noqa: S603 - fixed argv, no request-derived values
+            argv,
+            mode="strict",
+            strip_python_env=True,
             cwd=cwd,
-            env=env,
             capture_output=True,
             **UTF8_TEXT,
             timeout=timeout,
@@ -250,12 +250,6 @@ def _run(argv: list[str], *, cwd: str, timeout: int) -> tuple[int, str]:
         return 1, f"{argv[0]} timed out after {timeout}s"
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, f"{argv[0]} could not be run: {exc}"
-    finally:
-        if cleanup:
-            try:
-                os.unlink(cleanup)
-            except OSError:
-                pass
     return proc.returncode, ((proc.stdout or "") + (proc.stderr or "")).strip()
 
 

@@ -43,9 +43,9 @@ Four invariants hold across the handlers:
   (``ctx.require_owner``). An app token (this app's own, or one granted
   ``/api/apps/pptx-maker/*``) is already scoped by the auth middleware and passes.
 * **Nothing blocking on the loop.** Every filesystem walk, engine subprocess and
-  file read runs through :func:`off_loop`, which hands the work to the gateway's
-  ``subprocess_executor()``. This is not optional: one blocking call here
-  freezes every chat session on the gateway.
+  file read runs through :func:`off_loop`, which hands the work to a worker
+  thread of the event loop's default pool. This is not optional: one blocking
+  call here freezes every chat session on the gateway.
 * **Agent-authored text is redacted before it is served.** Deck artifacts are
   written by the presentation-engine agent from model output, so a TEXTUAL one
   reaching ``/preview`` is agent content crossing to a user surface and runs
@@ -80,12 +80,11 @@ from . import decks, engine, library, paths, preview_tools, provision
 from ._fs import atomic_write
 from ._host import (
     FileTooLargeError,
+    contains_sensitive_path,
     is_sensitive_path,
-    path_contains_sensitive,
     redact,
     refuses,
     sniff_raster_mime,
-    subprocess_executor,
 )
 
 logger = logging.getLogger("kirocrew.app.pptx-maker")
@@ -188,38 +187,23 @@ _BITMAP_FTYP_OFFSET = 4
 _BITMAP_FTYP_MAGIC = b"ftyp"
 
 
-# The one credential shape that can hide INSIDE a base64 body while decoding to noise.
-# An AWS key id is a fixed 4-char prefix plus exactly 16 upper/digit chars — all of it
-# base64 alphabet — so it can be smuggled as body text and reproduced by the re-encode.
-# Chance collision is negligible (~1.6e-7 per 20 KB raster) because the 16-char body is
-# required; matching a BARE 4-char prefix instead blanks real pictures at
-# 0.88% per 20 KB and 4.7% per 100 KB.
+# The encoded body is screened with the gateway's own credential scan (the backend
+# SDK's `iter_credential_matches`, App Kit level 17, through `_host.holds_credential`).
+# The shape that matters is an AWS key id: a fixed 4-char prefix plus exactly 16
+# upper/digit chars, all of it base64 alphabet, so it can be smuggled as body text and
+# reproduced by the re-encode. The scan matches it where the redactor leaves it
+# standing as an identifier. Chance collision is negligible (~1.6e-7 per 20 KB raster)
+# because the 16-char body is required.
 #
-# Every other provider marker (`xox…`, `sk-ant…`, `gh[pousr]_…`, `pypi-`, `glpat-`, a
-# JWT's `.`) needs a separator that is NOT in the base64 alphabet, so it cannot occur in
-# a body at all. Listing those here would be dead code — the appended-credential case
-# they were meant to catch is handled by requiring a proper URI terminator after the
-# body (see `_BITMAP_URI_TERMINATORS`), which covers every separator rather than an
-# enumerated few.
+# Every other shape the scan knows (`xox…`, `sk-ant…`, `gh[pousr]_…`, `pypi-`,
+# `glpat-`, a JWT's `.`, a `SecretAccessKey=` assignment with its 15-letter key) needs
+# a separator outside the base64 alphabet or a long fixed word, so random base64 does
+# not produce it. The appended-credential case is handled by requiring a proper URI
+# terminator after the body (see `_BITMAP_URI_TERMINATORS`), which covers every
+# separator rather than an enumerated few.
 #
-# Case-sensitive on purpose: the shared spelling's uppercase-only body over a
-# lowercased body would match ordinary mixed-case base64 constantly.
-#
-# The pattern is the gateway's own (``credential_patterns.AWS_KEY_ID``), read at
-# call time. ``None`` means the gateway has none, and the caller then treats the
-# blob as credential-bearing: the picture is blanked, the body is never served
-# unscanned.
-_encoded_credential_cache: dict[str, re.Pattern[str]] = {}
-
-
-def _encoded_credential_re() -> re.Pattern[str] | None:
-    pattern = _host.aws_key_id_pattern()
-    if pattern is None:
-        return None
-    compiled = _encoded_credential_cache.get(pattern)
-    if compiled is None:
-        compiled = _encoded_credential_cache[pattern] = re.compile(pattern)
-    return compiled
+# A gateway without the scan, or a scan that raises, answers "holds one", and the
+# picture is blanked: the body is never served unscanned.
 
 
 # Characters that legitimately END a `data:` URI in the artifact formats the engine
@@ -318,15 +302,14 @@ def _scanned_bitmap_bytes(b64_body: str) -> tuple[bytes | None, bool]:
     # a credential appended to a real raster's body decodes to noise (so the check
     # above passes) but survives re-encoding intact.
     #
-    # `_ENCODED_CREDENTIAL_RE`, not `redact()`. A full `redact()` here is unusable: its
-    # bare-secret heuristic flags a 40-char run of random base64, which every genuine
-    # raster contains — measured, it refused 300/300 real 20 KB rasters, i.e. it would
-    # blank every image in every deck. That is the same looks-secure-renders-blank
-    # failure `_INLINE_BITMAP_RE` exists to avoid, so the encoded pass matches only
-    # STRUCTURED credential markers, which random base64 does not produce by chance.
-    #
-    encoded = _encoded_credential_re()
-    if encoded is None or encoded.search(b64_body):
+    # The gateway's credential scan, not `redact()`. A full `redact()` here is
+    # unusable: its bare-secret heuristic flags a 40-char run of random base64, which
+    # every genuine raster contains — measured, it refused 300/300 real 20 KB rasters,
+    # i.e. it would blank every image in every deck. That is the same
+    # looks-secure-renders-blank failure `_INLINE_BITMAP_RE` exists to avoid, so the
+    # encoded pass matches only STRUCTURED credential markers, which random base64
+    # does not produce by chance.
+    if _host.holds_credential(b64_body):
         return None, True
     return raw, False
 
@@ -411,16 +394,15 @@ _engine_lock = threading.Lock()
 
 
 async def off_loop(fn: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
-    """Run a blocking callable on the subprocess pool.
+    """Run a blocking callable on a worker thread of the event loop's default pool.
 
-    THE chokepoint for this app's blocking work. ``subprocess_executor()`` rather
-    than the default executor because these calls spawn the engine venv and walk
-    a user-sized deck tree, and the default pool is also what the loop uses for
-    DNS — saturating it stalls the gateway. A gateway without that pool hands
-    back ``None``, which is the loop's default pool.
+    THE chokepoint for this app's blocking work: the engine venv spawns, the
+    deck-tree walks and the file reads all go through here, never onto the loop.
+    The default pool is the gateway's own, sized by the gateway; the App Kit offers
+    an app no other pool.
     """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(subprocess_executor(), partial(fn, *args, **kwargs))
+    return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
 
 
 #: Provisioning runs started and not awaited. The loop holds only a weak
@@ -928,7 +910,7 @@ def _write_deck_root(deck_root: str) -> tuple[int, dict]:
 
     Both predicates are needed and neither subsumes the other: ``is_sensitive_path``
     catches the directory itself and anything beneath it (``~/.ssh``,
-    ``~/.ssh/decks``), while ``path_contains_sensitive`` catches a root that would
+    ``~/.ssh/decks``), while ``contains_sensitive_path`` catches a root that would
     make decks SIBLINGS of a credential directory — bare ``~`` is not itself
     sensitive, so without the second check it is accepted.
 
@@ -955,7 +937,7 @@ def _write_deck_root(deck_root: str) -> tuple[int, dict]:
             "error": "that deck folder is not a usable path",
             "code": "invalid_deck_root",
         }
-    if is_sensitive_path(str(resolved)) or path_contains_sensitive(str(resolved)):
+    if is_sensitive_path(str(resolved)) or contains_sensitive_path(str(resolved)):
         # Deliberately not logged with the path: the refusal is the signal, and the
         # value is user-supplied text that would land in the gateway log verbatim.
         logger.warning("pptx-maker: refused a deck root on or containing a sensitive path")
@@ -1138,7 +1120,7 @@ def _read_artifact(deck_id: str, subpath: str) -> tuple[bytes, str] | None:
     served = SERVED_SUFFIXES.get(resolved.suffix.lower())
     if served is None:
         return None
-    # Read through the gateway's own `safe_read_file_bytes_nolink`, pinned to the
+    # Read through the gateway's own `read_bytes_nofollow`, pinned to the
     # deck directory as `within_root`.
     #
     # `resolve_deck_file` canonicalizes with `realpath` and re-checks containment, but
@@ -1164,7 +1146,7 @@ def _read_artifact(deck_id: str, subpath: str) -> tuple[bytes, str] | None:
     # previous inline read compared `fstat` and returned `None`), so it is caught and
     # mapped back to the same "not servable" answer every other rejection gives.
     try:
-        raw = hooks.safe_read_file_bytes_nolink(
+        raw = hooks.read_bytes_nofollow(
             str(resolved), within_root=str(deck_dir), max_bytes=MAX_ARTIFACT_BYTES
         )
     except FileTooLargeError:
