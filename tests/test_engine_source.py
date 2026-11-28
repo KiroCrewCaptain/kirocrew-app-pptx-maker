@@ -10,7 +10,9 @@ things that decide whether unvetted code runs are pinned hard here:
    points, so a traversal, absolute, symlink or device member must be refused.
 
 No test reaches the network: the download is either mocked or the archive is a
-tarball this file builds itself.
+tarball this file builds itself. A real transfer goes through the fake context's
+``verified_download`` (``tests/fakehost.py``) over a mocked opener, so it lands
+in the context's data directory, as the gateway's does.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from unittest import mock
 import pytest
 
 from backend import engine_source
+from fakehost import FakeCtx
 
 
 def _tar_bytes(entries: list[tarfile.TarInfo], payloads: dict[str, bytes]) -> bytes:
@@ -100,6 +103,19 @@ class TestThePin:
         assert engine_source.ENGINE_COMMIT in url
         assert engine_source.ENGINE_TAG not in url
 
+    def test_the_archive_url_is_the_host_that_serves_the_file(self):
+        """The verified download follows a redirect only on the same host, and
+        ``github.com/<repo>/archive/`` redirects to another one."""
+        assert engine_source.archive_url() == (
+            f"https://codeload.github.com/{engine_source.ENGINE_SLUG}/tar.gz/"
+            f"{engine_source.ENGINE_COMMIT}"
+        )
+        assert engine_source.ENGINE_REPO == f"https://github.com/{engine_source.ENGINE_SLUG}"
+
+    def test_the_size_is_a_positive_byte_count(self):
+        size = engine_source.ENGINE_TARBALL_SIZE
+        assert isinstance(size, int) and not isinstance(size, bool) and size > 0
+
     def test_the_tag_is_display_only(self):
         """`ENGINE_TAG` must not be able to influence the fetch — it exists so
         the UI can show a version, and it is only ever reported for a tree whose
@@ -120,7 +136,7 @@ class TestUrlOverride:
         """An operator-supplied value must not be able to read local files or
         fetch plaintext."""
         monkeypatch.setenv(engine_source.ENGINE_URL_ENV, bad)
-        assert engine_source.archive_url().startswith("https://github.com/")
+        assert engine_source.archive_url().startswith("https://codeload.github.com/")
 
 
 class TestDownloadVerification:
@@ -154,14 +170,22 @@ class TestDownloadVerification:
 
     _SIGNED = "https://mirror.example/engine.tar.gz?X-Amz-Signature=sup3rsecret"
 
-    def test_a_download_error_does_not_echo_the_signed_url(self, tmp_path: Path):
+    @staticmethod
+    def _pin(payload: bytes):
+        """Point the digest and the size pins at *payload*."""
+        return mock.patch.multiple(
+            engine_source,
+            ENGINE_TARBALL_SHA256=hashlib.sha256(payload).hexdigest(),
+            ENGINE_TARBALL_SIZE=len(payload),
+        )
+
+    def test_a_download_error_does_not_echo_the_signed_url(self, app_ctx: FakeCtx):
         """A mirror override may hold credentials in userinfo OR a signed query.
 
-        `redact_url` exists for exactly this and the log line already used it — but the
-        error RETURN interpolated `{exc}`, and this value reaches the dashboard. Same
-        omission, same fix, as `papyrus/backend/tectonic.py`'s download path.
+        This value reaches the dashboard, so the gateway's error wording names the
+        host alone and the app passes nothing else of the url on.
         """
-        staging = tmp_path / "engine.tar.gz"
+        staging = app_ctx.data_dir / "engine.tar.gz"
         with (
             mock.patch.object(engine_source, "archive_url", return_value=self._SIGNED),
             self._raise_on_open(OSError(f"connect failed to {self._SIGNED}")),
@@ -170,13 +194,13 @@ class TestDownloadVerification:
         assert ok is False
         assert "sup3rsecret" not in error, f"signed query leaked: {error}"
 
-    def test_a_malformed_url_is_handled_not_escaped(self, tmp_path: Path):
+    def test_a_malformed_url_is_handled_not_escaped(self, app_ctx: FakeCtx):
         """`http.client.InvalidURL` derives from `HTTPException`, NOT from `OSError`,
-        `URLError` or `ValueError` — so without explicit handling it passes through
-        this handler and an outer catch-all reports it as an unexplained crash."""
+        `URLError` or `ValueError` — so the transfer must report it rather than let
+        an outer catch-all report it as an unexplained crash."""
         import http.client
 
-        staging = tmp_path / "engine.tar.gz"
+        staging = app_ctx.data_dir / "engine.tar.gz"
         with (
             mock.patch.object(engine_source, "archive_url", return_value=self._SIGNED),
             self._raise_on_open(
@@ -190,34 +214,34 @@ class TestDownloadVerification:
         assert "InvalidURL" in error
         assert "mirror.example" in error
 
-    def test_a_matching_digest_is_accepted(self, tmp_path: Path):
+    def test_a_matching_digest_and_size_is_accepted(self, app_ctx: FakeCtx):
         payload = b"x" * 200_000
-        staging = tmp_path / "engine.tar.gz"
-        with (
-            self._patch_download(payload),
-            mock.patch.object(
-                engine_source, "ENGINE_TARBALL_SHA256", hashlib.sha256(payload).hexdigest()
-            ),
-        ):
+        staging = app_ctx.data_dir / "engine.tar.gz"
+        with self._patch_download(payload), self._pin(payload):
             ok, error = engine_source.download_archive(staging)
         assert ok is True and error == ""
         assert staging.read_bytes() == payload
 
-    def test_a_digest_mismatch_refuses_and_removes_the_bytes(self, tmp_path: Path):
+    def test_a_digest_mismatch_refuses_and_removes_the_bytes(self, app_ctx: FakeCtx):
         """The load-bearing refusal. A tampered / re-generated archive must not
         be left on disk for a later step or a retry to pick up."""
-        staging = tmp_path / "engine.tar.gz"
-        with self._patch_download(b"y" * 200_000):
+        staging = app_ctx.data_dir / "engine.tar.gz"
+        payload = b"y" * 200_000
+        with (
+            self._patch_download(payload),
+            mock.patch.object(engine_source, "ENGINE_TARBALL_SIZE", len(payload)),
+        ):
             ok, error = engine_source.download_archive(staging)
         assert ok is False
         assert "REFUSING" in error and "sha256" in error
         assert engine_source.ENGINE_TARBALL_SHA256[:16] in error
         assert not staging.exists(), "refused bytes must not survive"
+        assert list(app_ctx.data_dir.iterdir()) == [], "no staging file is left behind"
 
-    def test_a_truncated_transfer_is_refused_even_if_it_hashed(self, tmp_path: Path):
-        """Belt and braces: a tiny body is an error page, not a source tree."""
+    def test_a_short_transfer_is_refused_even_if_it_hashed(self, app_ctx: FakeCtx):
+        """The size is part of the pin: a truncated body or an error page is refused."""
         payload = b"404: Not Found"
-        staging = tmp_path / "engine.tar.gz"
+        staging = app_ctx.data_dir / "engine.tar.gz"
         with (
             self._patch_download(payload),
             mock.patch.object(
@@ -228,47 +252,54 @@ class TestDownloadVerification:
         assert ok is False and "too small" in error
         assert not staging.exists()
 
-    def test_a_network_failure_is_reported_not_raised(self, tmp_path: Path):
+    def test_the_fetch_names_the_pinned_url_digest_and_size(self, app_ctx: FakeCtx):
+        """One place answers "did we verify this before installing it?": the gateway's."""
+        with self._patch_download(b"z"):
+            engine_source.download_archive(app_ctx.data_dir / "engine.tar.gz")
+        assert app_ctx.downloads == [
+            {
+                "url": engine_source.archive_url(),
+                "dest": "engine.tar.gz",
+                "sha256": engine_source.ENGINE_TARBALL_SHA256,
+                "size": engine_source.ENGINE_TARBALL_SIZE,
+            }
+        ]
+
+    def test_a_network_failure_is_reported_not_raised(self, app_ctx: FakeCtx):
         """Provisioning is a detached background job; its only channel is the log."""
         opener = mock.Mock()
         opener.open = mock.Mock(side_effect=urllib.error.URLError("dns"))
         with mock.patch.object(urllib.request, "build_opener", return_value=opener):
-            ok, error = engine_source.download_archive(tmp_path / "e.tar.gz")
+            ok, error = engine_source.download_archive(app_ctx.data_dir / "e.tar.gz")
         assert ok is False and "download failed" in error
 
     def test_the_skip_env_refuses_before_touching_the_network(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, app_ctx: FakeCtx, monkeypatch: pytest.MonkeyPatch
     ):
         """A test run must never be able to reach the network."""
         monkeypatch.setenv(engine_source.SKIP_DOWNLOAD_ENV, "1")
         with mock.patch.object(urllib.request, "build_opener") as opener:
-            ok, error = engine_source.download_archive(tmp_path / "e.tar.gz")
+            ok, error = engine_source.download_archive(app_ctx.data_dir / "e.tar.gz")
         assert ok is False and engine_source.SKIP_DOWNLOAD_ENV in error
         assert not opener.called
+        assert app_ctx.downloads == []
 
-    def test_the_transfer_goes_through_the_shared_downloader_with_the_pin(
-        self, tmp_path: Path, fake_host
-    ):
-        """One place answers "did we verify this before installing it?": the gateway's."""
-        archive = tmp_path / "engine.tar.gz"
-        shared = mock.Mock(return_value=(True, ""))
-        fake_host.table[("kiro_crew.asset_downloader", "download_to")] = shared
-        assert engine_source.download_archive(archive) == (True, "")
-        shared.assert_called_once()
-        args, kwargs = shared.call_args
-        assert args == (archive, engine_source.archive_url())
-        assert kwargs["sha256"] == engine_source.ENGINE_TARBALL_SHA256
-        assert kwargs["min_bytes"] == engine_source._MIN_ARCHIVE_BYTES
-        assert kwargs["allow_cross_host_redirects"] is True
+    def test_a_gateway_without_the_verified_download_refuses_the_fetch(self, app_ctx: FakeCtx):
+        """Nothing is fetched by any other means: no verified download, no engine."""
+        app_ctx.verified_download = None  # type: ignore[assignment,method-assign]
+        with mock.patch.object(urllib.request, "build_opener") as opener:
+            ok, error = engine_source.download_archive(app_ctx.data_dir / "e.tar.gz")
+        assert ok is False and "REFUSING" in error and "verified download" in error
+        assert not opener.called
+        assert not (app_ctx.data_dir / "e.tar.gz").exists()
 
-    def test_a_gateway_without_the_downloader_refuses_the_fetch(self, tmp_path: Path, fake_host):
-        """Nothing is fetched by any other means: no verified downloader, no engine."""
-        fake_host.remove("kiro_crew.asset_downloader", "download_to")
+    def test_an_archive_outside_the_data_dir_is_refused(self, app_ctx: FakeCtx, tmp_path: Path):
+        """The gateway writes only inside the app's own data directory."""
         with mock.patch.object(urllib.request, "build_opener") as opener:
             ok, error = engine_source.download_archive(tmp_path / "e.tar.gz")
-        assert ok is False and "REFUSING" in error and "verified downloader" in error
+        assert ok is False and "data directory" in error
         assert not opener.called
-        assert not (tmp_path / "e.tar.gz").exists()
+        assert app_ctx.downloads == []
 
 
 class TestSafeExtraction:
@@ -484,9 +515,11 @@ class TestSourceMarker:
 class TestInstallThroughTheSharedDownloader:
     """`install_engine` over the REAL download path, with only the socket mocked.
 
-    The archive arrives through `asset_downloader.download_to`, so these pin the
+    The archive arrives through the context's `verified_download`, so these pin the
     order across the seam: the digest is checked before anything is extracted,
     and the archive-shape refusals still fire on what the download hands over.
+    The engine root is under the context's data directory, as `paths.engine_root`
+    puts it.
     """
 
     @staticmethod
@@ -504,12 +537,14 @@ class TestInstallThroughTheSharedDownloader:
         (root / "mcp-local").mkdir(parents=True)
         (root / "mcp-local" / "keep.txt").write_text("previous engine", encoding="utf-8")
 
-    def test_a_digest_mismatch_is_refused_before_extraction(self, tmp_path: Path):
-        root = tmp_path / "vendor" / "sdpm"
+    def test_a_digest_mismatch_is_refused_before_extraction(self, app_ctx: FakeCtx):
+        root = app_ctx.data_dir / "vendor" / "sdpm"
         self._previous_engine(root)
         log: list[str] = []
+        served = _benign_engine_tar()
         with (
-            self._serve(_benign_engine_tar() + b"\0" * engine_source._MIN_ARCHIVE_BYTES),
+            self._serve(served),
+            mock.patch.object(engine_source, "ENGINE_TARBALL_SIZE", len(served)),
             mock.patch.object(engine_source, "_extract_tar") as extract,
         ):
             assert engine_source.install_engine(root, log) is False
@@ -517,16 +552,18 @@ class TestInstallThroughTheSharedDownloader:
         assert any("REFUSING" in line and "sha256 mismatch" in line for line in log), log
         assert (root / "mcp-local" / "keep.txt").read_text(encoding="utf-8") == "previous engine"
 
-    def test_a_corrupt_archive_that_matches_its_pin_is_still_refused(self, tmp_path: Path):
+    def test_a_corrupt_archive_that_matches_its_pin_is_still_refused(self, app_ctx: FakeCtx):
         """The digest proves WHICH bytes arrived, not that they are a tarball."""
-        root = tmp_path / "vendor" / "sdpm"
+        root = app_ctx.data_dir / "vendor" / "sdpm"
         self._previous_engine(root)
         corrupt = b"not a gzip stream " * 10_000
         log: list[str] = []
         with (
             self._serve(corrupt),
-            mock.patch.object(
-                engine_source, "ENGINE_TARBALL_SHA256", hashlib.sha256(corrupt).hexdigest()
+            mock.patch.multiple(
+                engine_source,
+                ENGINE_TARBALL_SHA256=hashlib.sha256(corrupt).hexdigest(),
+                ENGINE_TARBALL_SIZE=len(corrupt),
             ),
         ):
             assert engine_source.install_engine(root, log) is False

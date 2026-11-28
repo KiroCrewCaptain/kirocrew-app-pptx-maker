@@ -10,7 +10,7 @@ model-authored deck content. Three properties therefore matter more than the
 happy path, and each is pinned below:
 
 * **The spawn is sandboxed.** Every call goes through
-  ``sandboxed_spawn_argv(..., strip_python_env=True)`` so the child gets a
+  ``run_sandboxed(..., strip_python_env=True)`` so the child gets a
   credential-scrubbed environment and cannot inherit the gateway's ``PYTHONPATH``.
 * **A not-ready or misbehaving engine degrades, never raises.** Half-installed
   engine, non-zero exit, non-JSON stdout and wrong-typed JSON must all become a
@@ -20,7 +20,7 @@ happy path, and each is pinned below:
   coerce whatever comes back over the subprocess boundary.
 
 No real subprocess, with ONE stated exception: every test mocks at the
-``_spawn`` / ``sandboxed_spawn_argv`` boundary, except
+``_spawn`` / ``run_sandboxed`` boundary, except
 ``TestTheEngineStdoutIsDecodedAsUtf8``, which measures the decode that happens
 between the child's bytes and ``EngineResult.stdout`` and so cannot use a mock
 that hands back a ``str``.
@@ -37,7 +37,20 @@ from unittest import mock
 
 import pytest
 
-from backend import engine, engine_source, paths
+from backend import _host, engine, engine_source, paths
+
+
+def _running(argv: list[str]):
+    """Patch the sandboxed run to run *argv* for real, with the keywords the call site passed.
+
+    The decode the call site asks for (``engine.UTF8_TEXT``) reaches the run as
+    those keywords, so a test of it must keep them rather than hand back a ``str``.
+    """
+
+    def run(_argv: list[str], *, mode: str = "standard", strip_python_env: bool = False, **kw):
+        return subprocess.run(argv, **kw)  # noqa: S603 - test-only, fixed argv
+
+    return mock.patch.object(engine, "run_sandboxed", side_effect=run)
 
 
 def _verified_tree(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,17 +97,13 @@ class TestSpawnSandboxing:
     def test_routes_through_the_credential_scrubbing_chokepoint(self, tmp_path: Path):
         """Not a bare `subprocess.run`: without the scrubbed env the engine
         inherits AWS_SECRET*/SSH_AUTH_SOCK/GIT_ASKPASS and every bot token."""
-        scrubbed = {"PATH": "/usr/bin"}
-        with (
-            mock.patch.object(
-                engine, "sandboxed_spawn_argv", return_value=(["py"], scrubbed, None)
-            ) as chokepoint,
-            mock.patch.object(engine, "run_limited") as run,
-        ):
-            run.return_value = mock.Mock(returncode=0, stdout="{}", stderr="")
+        with mock.patch.object(engine, "run_sandboxed") as chokepoint:
+            chokepoint.return_value = mock.Mock(returncode=0, stdout="{}", stderr="")
             engine._spawn(["py"], cwd=str(tmp_path), timeout=5)
+        assert chokepoint.call_args.args == (["py"],)
         assert chokepoint.call_args.kwargs["strip_python_env"] is True
-        assert run.call_args.kwargs["env"] == scrubbed
+        # No environment of its own: the chokepoint scrubs the gateway's.
+        assert "env" not in chokepoint.call_args.kwargs
         # STRICT, not the `standard` default. The env scrub above stops this child
         # INHERITING a credential; it does not stop it READING one off disk, and
         # standard mode deliberately leaves ~/.aws and ~/.ssh visible so
@@ -106,39 +115,28 @@ class TestSpawnSandboxing:
     def test_a_spawn_failure_becomes_a_result_not_an_exception(self, tmp_path: Path):
         """These run on a worker thread behind `off_loop`; an escaping OSError
         would surface as an opaque 500 instead of a degraded status."""
-        with (
-            mock.patch.object(engine, "sandboxed_spawn_argv", return_value=(["py"], {}, None)),
-            mock.patch.object(engine, "run_limited", side_effect=OSError("ENOENT")),
-        ):
+        with mock.patch.object(engine, "run_sandboxed", side_effect=OSError("ENOENT")):
             result = engine._spawn(["py"], cwd=str(tmp_path), timeout=5)
         assert result.returncode == 1
         assert "ENOENT" in result.stderr
 
     def test_a_timeout_becomes_a_result_not_an_exception(self, tmp_path: Path):
-        with (
-            mock.patch.object(engine, "sandboxed_spawn_argv", return_value=(["py"], {}, None)),
-            mock.patch.object(
-                engine,
-                "run_limited",
-                side_effect=subprocess.TimeoutExpired(cmd="py", timeout=3),
-            ),
+        with mock.patch.object(
+            engine,
+            "run_sandboxed",
+            side_effect=subprocess.TimeoutExpired(cmd="py", timeout=3),
         ):
             result = engine._spawn(["py"], cwd=str(tmp_path), timeout=3)
         assert result.returncode == 1
 
-    def test_the_sandbox_profile_is_cleaned_up_even_on_failure(self, tmp_path: Path):
-        """One leaked temp profile per engine call would litter the temp dir —
-        and these run on every library listing."""
-        profile = tmp_path / "sandbox.sb"
-        profile.write_text("(version 1)", encoding="utf-8")
-        with (
-            mock.patch.object(
-                engine, "sandboxed_spawn_argv", return_value=(["py"], {}, str(profile))
-            ),
-            mock.patch.object(engine, "run_limited", side_effect=OSError("boom")),
+    def test_a_sandbox_refusal_is_not_swallowed(self, tmp_path: Path):
+        """No child was started, so there is no result to degrade to: the caller
+        reports the refusal."""
+        with mock.patch.object(
+            engine, "run_sandboxed", side_effect=_host.SandboxUnavailableError("no backend")
         ):
-            engine._spawn(["py"], cwd=str(tmp_path), timeout=5)
-        assert not profile.exists()
+            with pytest.raises(_host.SandboxUnavailableError):
+                engine._spawn(["py"], cwd=str(tmp_path), timeout=5)
 
 
 class TestEngineStatus:
@@ -497,14 +495,15 @@ class TestTheEngineStdoutIsDecodedAsUtf8:
     """The one class here that spawns a REAL child, because a mock cannot decode.
 
     Every other test in this module mocks at the ``_spawn`` /
-    ``sandboxed_spawn_argv`` boundary, which is right for logic and structurally
+    ``run_sandboxed`` boundary, which is right for logic and structurally
     useless here: the defect *is* the decode `subprocess` performs between the
     child's bytes and `EngineResult.stdout`, so a mock that hands back a `str`
-    has already skipped the step under test. These therefore drive the real
-    ``run_limited`` with a real child, and mock only the sandbox wrapper (whose
-    argv rewriting is not what is being measured).
+    has already skipped the step under test. These therefore run a real child
+    with the keywords the call site hands the sandboxed run (``_running``), and
+    replace only the sandbox itself (whose argv rewriting is not what is being
+    measured).
 
-    ``run_limited(..., text=True)`` with no ``encoding=`` decodes with
+    ``subprocess.run(..., text=True)`` with no ``encoding=`` decodes with
     ``locale.getpreferredencoding()`` — UTF-8 on POSIX, the legacy ANSI code page
     on Windows. The child here is the engine venv's own Python, driven with
     model-authored deck content, so non-ASCII in its output is the normal case
@@ -541,9 +540,7 @@ class TestTheEngineStdoutIsDecodedAsUtf8:
         with pytest.raises(UnicodeDecodeError):
             self.PAYLOAD.decode("utf-8")  # guard the guard
 
-        with mock.patch.object(
-            engine, "sandboxed_spawn_argv", return_value=(self._argv(), None, None)
-        ):
+        with _running(self._argv()):
             result = engine._spawn(["ignored"], cwd=str(tmp_path), timeout=30)
 
         assert result.returncode == 0
@@ -562,7 +559,7 @@ class TestTheEngineStdoutIsDecodedAsUtf8:
             "-c",
             f"import sys;sys.stdout.buffer.write({payload!r});sys.stdout.buffer.flush()",
         ]
-        with mock.patch.object(engine, "sandboxed_spawn_argv", return_value=(argv, None, None)):
+        with _running(argv):
             result = engine._spawn(["ignored"], cwd=str(tmp_path), timeout=30)
 
         assert result.json() == {"added": ["提案 \U0001f600"]}

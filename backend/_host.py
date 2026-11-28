@@ -4,35 +4,32 @@ An external app's Python runs inside the gateway process. PPTX Maker needs two
 kinds of host surface:
 
 1. **The App Kit context** handed to its hooks (``ctx``): the data directory,
-   the owner gate (``ctx.require_owner``), the audit log (``ctx.audit``) and
-   outbound redaction (``ctx.scrub``). These are public seams; each is read off
+   the owner gate (``ctx.require_owner``), the audit log (``ctx.audit``),
+   outbound redaction (``ctx.scrub``) and, from App Kit level 20, the verified
+   download (``ctx.verified_download``). These are public seams; each is read off
    the context with ``getattr`` and has a fallback that is never MORE permissive
    than the host: no owner gate refuses everyone, no scrubber withholds the
-   text, no audit sink logs locally.
+   text, no audit sink logs locally, no verified download fetches nothing.
 
-2. **Security controls that have no App Kit seam yet.** PPTX Maker downloads a
-   third-party engine, builds it with ``uv`` and runs it over model-authored
-   deck content, so every child goes through the gateway's OS sandbox
-   chokepoint, the download through its verified downloader, every path through
-   its sensitive-path gate and every agent-written file through its pinned,
-   link-refusing reader. Copying those controls into this repository would leave
-   a security control that looks present and drifts from the one the gateway
-   enforces, so they are looked up in the running gateway instead, and only here
-   (``tests/test_no_host_imports.py`` pins that). Each lookup is lazy and runs at
-   call time through :func:`_host_attr`; when the gateway does not provide one,
-   the operation that needs it is REFUSED (nothing is spawned, the download is
-   refused, a path reads as sensitive, a file reads as unreadable), never run
-   without it. ``PORTING.md`` lists each one as a gap.
+2. **The public backend SDK** (``kiro_crew.apps.backend_sdk``), for the security
+   controls no context seam carries. PPTX Maker downloads a third-party engine,
+   builds it with ``uv`` and runs it over model-authored deck content, so every
+   child goes through the gateway's OS sandbox, every path through its
+   sensitive-path gate, every agent-written file through its no-follow reader and
+   every served text through its exfil and credential scans. Copying those
+   controls into this repository would leave a security control that looks
+   present and drifts from the one the gateway enforces, so they are looked up in
+   the running gateway instead, and only here (``tests/test_no_host_imports.py``
+   pins that). Each lookup is lazy and runs at call time through
+   :func:`_backend_sdk_attr`, which also checks the App Kit level the name arrived
+   at; when the gateway does not provide one, the operation that needs it is
+   REFUSED (nothing is spawned, a path reads as sensitive, a file reads as
+   unreadable, a picture is blanked), never run without it.
 
-3. **The public backend SDK** (``kiro_crew.apps.backend_sdk``), for a control
-   that has moved there: the raster sniffer, from App Kit level 14. It is
-   looked up the same lazy way, through :func:`_backend_sdk_attr`, which also
-   checks the level the name arrived at, and a gateway without it refuses the
-   same way.
-
-Everything else PPTX Maker used from the gateway is either replaced by the
-context above or restated in ``_compat.py``, ``_fs.py`` and ``_os_deps.py``
-(small helpers that carry no security decision).
+No private ``kiro_crew`` name is reached. Everything else PPTX Maker used from the
+gateway is either replaced by the two surfaces above or restated in
+``_compat.py``, ``_fs.py`` and ``_os_deps.py`` (small helpers that carry no
+security decision).
 """
 
 from __future__ import annotations
@@ -71,7 +68,7 @@ def _host_attr(module: str, name: str) -> Any | None:
     """``module.name`` from the running gateway, or ``None`` when it has none.
 
     The one seam tests replace: a fake host answers here, so no test needs a
-    Kiro Crew install.
+    Kiro Crew install. Only :data:`BACKEND_SDK` is ever asked.
     """
     try:
         mod = importlib.import_module(module)
@@ -83,8 +80,24 @@ def _host_attr(module: str, name: str) -> Any | None:
 #: The gateway's public backend SDK package (App Kit level 7 and later).
 BACKEND_SDK = "kiro_crew.apps.backend_sdk"
 
+#: The App Kit level that publishes the backend SDK package and its first names:
+#: the sandboxed run, the sensitive-path checks and the no-follow read.
+BACKEND_SDK_LEVEL = 7
+
 #: The App Kit level that added the backend SDK's ``sniff_raster_mime``.
 RASTER_SNIFF_SDK_LEVEL = 14
+
+#: The App Kit level that added the backend SDK's content checks:
+#: ``contains_exfiltration_url``, ``iter_credential_matches`` and
+#: ``CREDENTIAL_PLACEHOLDER``.
+CONTENT_CHECK_SDK_LEVEL = 17
+
+#: The App Kit level that added the backend SDK's host tool lookups:
+#: ``uv_executable`` and ``agent_template_host_values``.
+HOST_TOOLS_SDK_LEVEL = 18
+
+#: The App Kit level that added ``ctx.verified_download``.
+VERIFIED_DOWNLOAD_SDK_LEVEL = 20
 
 
 def _backend_sdk_attr(name: str, level: int) -> Any | None:
@@ -114,34 +127,40 @@ class Route:
     handler: Callable[[Any, Any], Awaitable[Any]]
 
 
-#: What each group of host controls is needed for, for the health report.
-_CAPABILITIES: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+#: What each group of backend SDK names is needed for, for the health report: the
+#: issue, then each ``(name, App Kit level)`` the group needs.
+_CAPABILITIES: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
     (
         "the engine cannot be built or run: this Kiro Crew has no sandboxed process launch",
-        (
-            ("kiro_crew.sandbox", "sandboxed_spawn_argv"),
-            ("kiro_crew.sandbox", "run_limited"),
-        ),
-    ),
-    (
-        "the engine install is refused: this Kiro Crew has no verified downloader",
-        (("kiro_crew.asset_downloader", "download_to"),),
+        (("run_sandboxed", BACKEND_SDK_LEVEL),),
     ),
     (
         "every deck and library path is refused: this Kiro Crew has no sensitive-path gate",
         (
-            ("kiro_crew.security", "is_sensitive_path"),
-            ("kiro_crew.security", "path_contains_sensitive"),
+            ("is_sensitive_path", BACKEND_SDK_LEVEL),
+            ("contains_sensitive_path", BACKEND_SDK_LEVEL),
         ),
     ),
     (
         "deck files and styles cannot be read: this Kiro Crew has no pinned file reader",
-        (("kiro_crew.hooks", "safe_read_file_bytes_nolink"),),
+        (("read_bytes_nofollow", BACKEND_SDK_LEVEL),),
     ),
     (
-        "deck links, deck ids and slide slugs are refused: this Kiro Crew has no exfil scan",
-        (("kiro_crew.security", "scan_exfiltration_urls"),),
+        "deck links, deck ids and slide slugs are refused: this Kiro Crew has no exfil scan "
+        f"(App Kit level {CONTENT_CHECK_SDK_LEVEL} or later provides it)",
+        (("contains_exfiltration_url", CONTENT_CHECK_SDK_LEVEL),),
     ),
+    (
+        "pictures inside slide previews are blanked: this Kiro Crew has no credential scan "
+        f"for them (App Kit level {CONTENT_CHECK_SDK_LEVEL} or later provides it)",
+        (("iter_credential_matches", CONTENT_CHECK_SDK_LEVEL),),
+    ),
+)
+
+#: Shown when the context has no verified download (App Kit level below 20).
+NO_VERIFIED_DOWNLOAD = (
+    "the engine install is refused: this Kiro Crew has no verified download "
+    f"(App Kit level {VERIFIED_DOWNLOAD_SDK_LEVEL} or later provides it)"
 )
 
 #: Shown when the backend SDK has no raster sniffer (App Kit level below 14).
@@ -162,8 +181,10 @@ def capability_issues(ctx: Any) -> list[str]:
     if not redaction_available_on(ctx):
         issues.append("deck content is withheld: this Kiro Crew has no redaction seam")
     for issue, names in _CAPABILITIES:
-        if any(not callable(_host_attr(module, name)) for module, name in names):
+        if any(not callable(_backend_sdk_attr(name, level)) for name, level in names):
             issues.append(issue)
+    if not callable(getattr(ctx, "verified_download", None)):
+        issues.append(NO_VERIFIED_DOWNLOAD)
     if _raster_sniffer() is None:
         issues.append(NO_RASTER_SNIFFER)
     return issues
@@ -260,15 +281,13 @@ def refuses(text: str) -> bool:
 
     The comparison alone was the decision while the gateway's redaction rewrote a
     data-carrying URL whole; a gateway that masks only credential values leaves such
-    a URL as written, so the gateway's own exfil scan
-    (``kiro_crew.security.scan_exfiltration_urls``) decides it too. On an older
-    gateway the redaction still rewrites the URL and the comparison refuses it, so
-    the answer is the same on both. Fails closed: a gateway without the scan, or a
-    scan that raises, refuses.
+    a URL as written, so the gateway's own exfil scan (the backend SDK's
+    ``contains_exfiltration_url``, App Kit level 17) decides it too. Fails closed: a
+    gateway without the scan, or a scan that raises, refuses.
     """
     if redact(text) != text:
         return True
-    scan = _host_attr("kiro_crew.security", "scan_exfiltration_urls")
+    scan = _backend_sdk_attr("contains_exfiltration_url", CONTENT_CHECK_SDK_LEVEL)
     if not callable(scan):
         return True
     try:
@@ -284,9 +303,31 @@ def redaction_available_on(ctx: Any) -> bool:
 
 
 def redacted_credential_tag() -> str:
-    """The marker the gateway writes where it removed a credential."""
-    tag = _host_attr("kiro_crew.security", "REDACTED_CREDENTIAL_TAG")
+    """The marker the gateway writes where it removed a credential.
+
+    The backend SDK's ``CREDENTIAL_PLACEHOLDER`` (App Kit level 17); the same
+    literal on a gateway without it.
+    """
+    tag = _backend_sdk_attr("CREDENTIAL_PLACEHOLDER", CONTENT_CHECK_SDK_LEVEL)
     return tag if isinstance(tag, str) and tag else "[REDACTED: credential]"
+
+
+def holds_credential(text: str) -> bool:
+    """Whether the gateway's credential scan finds a credential in *text*.
+
+    The backend SDK's ``iter_credential_matches`` (App Kit level 17), which matches
+    more than the redaction masks (an AWS access key id among them). ``True``
+    (treat it as holding one) on a gateway without it, or when the scan raises, so
+    the caller drops the text rather than serve it unscanned.
+    """
+    scan = _backend_sdk_attr("iter_credential_matches", CONTENT_CHECK_SDK_LEVEL)
+    if not callable(scan):
+        return True
+    try:
+        return next(iter(scan(text)), None) is not None
+    except Exception:  # noqa: BLE001 - fail closed: treat as credential-bearing
+        logger.warning("pptx-maker: the credential scan failed; treated as a credential")
+        return True
 
 
 # ── audit ───────────────────────────────────────────────────────────────────
@@ -323,7 +364,7 @@ class SandboxUnavailableError(RuntimeError):
 
     ``kind`` is the host's own classification when it refused
     (``"no_backend"``, ``"transient"``, ...), or ``"host_missing"`` when the
-    gateway has no sandboxed spawn chain at all.
+    gateway has no sandboxed run at all.
     """
 
     def __init__(self, message: str, *, kind: str = "host_missing") -> None:
@@ -332,57 +373,49 @@ class SandboxUnavailableError(RuntimeError):
 
 
 def _host_sandbox_errors() -> tuple[type[BaseException], ...]:
-    err = _host_attr("kiro_crew.sandbox", "SandboxUnavailableError")
+    err = _backend_sdk_attr("SandboxUnavailableError", BACKEND_SDK_LEVEL)
     return (err,) if isinstance(err, type) and issubclass(err, BaseException) else ()
 
 
-def sandboxed_spawn_argv(
-    argv: list[str], mode: str = "standard", **kwargs: Any
-) -> tuple[list[str], dict[str, str], str | None]:
-    """The gateway's sandbox chokepoint: ``(wrapped argv, scrubbed env, cleanup path)``.
+def run_sandboxed(
+    argv: list[str], *, mode: str = "standard", strip_python_env: bool = False, **run_kwargs: Any
+) -> Any:
+    """Run *argv* to completion in the gateway's OS sandbox, under its resource limits.
 
-    Raises :class:`SandboxUnavailableError` when the host refuses or lacks it.
+    The backend SDK's ``run_sandboxed``: the gateway's spawn chokepoint (a
+    credential-scrubbed environment, the sandbox tier *mode*), then its resource
+    limits applied after ``exec``, then its cleanup, in one call. *run_kwargs* are
+    the ``subprocess.run`` keywords it forwards (``cwd``, ``capture_output``,
+    ``timeout``, ``text``, ...). Returns the ``subprocess.CompletedProcess``.
+
+    Raises :class:`SandboxUnavailableError` when the host refuses the spawn or has
+    no sandboxed run: an unsandboxed or unlimited child is not run in its place.
+    Errors from the run itself (``OSError``, ``subprocess.SubprocessError``)
+    propagate unchanged.
     """
-    impl = _host_attr("kiro_crew.sandbox", "sandboxed_spawn_argv")
+    impl = _backend_sdk_attr("run_sandboxed", BACKEND_SDK_LEVEL)
     if not callable(impl):
         raise SandboxUnavailableError(NO_HOST_SANDBOX)
     try:
-        return impl(argv, mode, **kwargs)
+        return impl(argv, mode=mode, strip_python_env=strip_python_env, **run_kwargs)
     except _host_sandbox_errors() as exc:
         raise SandboxUnavailableError(
             str(exc), kind=str(getattr(exc, "kind", "") or "no_backend")
         ) from exc
 
 
-def run_limited(argv: Any, **kwargs: Any) -> Any:
-    """``subprocess.run`` with the gateway's resource limits applied after ``exec``.
-
-    Raises :class:`SandboxUnavailableError` on a gateway without it: an
-    unlimited child is not run in its place.
-    """
-    impl = _host_attr("kiro_crew.sandbox", "run_limited")
-    if not callable(impl):
-        raise SandboxUnavailableError(NO_HOST_SANDBOX)
-    return impl(argv, **kwargs)
-
-
-def subprocess_executor() -> Any:
-    """The gateway's bounded pool for subprocess-related blocking work.
-
-    ``None`` (the loop's default pool) on a gateway without one.
-    """
-    impl = _host_attr("kiro_crew.executors", "subprocess_executor")
-    return impl() if callable(impl) else None
+# ── host tools and agent-template values ────────────────────────────────────
 
 
 def resolve_uv() -> str | None:
     """Absolute path to a usable ``uv``, or ``None``.
 
-    The gateway's own resolver first, because the gateway renders the same value
-    into the agents' ``{UV_BIN}`` and the two must agree. On a gateway without it,
-    the same ladder: the ``uv`` wheel's locator, then an absolute ``PATH`` hit.
+    The gateway's own resolver first (the backend SDK's ``uv_executable``, App Kit
+    level 18), because the gateway renders the same value into the agents'
+    ``{UV_BIN}`` and the two must agree. On a gateway without it, the same ladder:
+    the ``uv`` wheel's locator, then an absolute ``PATH`` hit.
     """
-    impl = _host_attr("kiro_crew.env", "resolve_uv")
+    impl = _backend_sdk_attr("uv_executable", HOST_TOOLS_SDK_LEVEL)
     if callable(impl):
         found = impl()
         return found if isinstance(found, str) and found else None
@@ -398,50 +431,89 @@ def resolve_uv() -> str | None:
     return found if found and os.path.isabs(found) else None
 
 
+#: The two agent-template placeholders whose rendered value this app restates.
+_HOST_PATH = "{HOST_PATH}"
+_UV_BIN = "{UV_BIN}"
+
+
+def _template_host_values() -> dict[str, Any] | None:
+    """What the gateway renders for its host placeholders, or ``None`` when it does not say.
+
+    The backend SDK's ``agent_template_host_values`` (App Kit level 18), the
+    function the gateway's renderer itself calls. A value the host cannot compute
+    is left out of it. ``None`` on a gateway without it, and for an answer that is
+    not a mapping: the caller then restates what an older gateway renders.
+    """
+    impl = _backend_sdk_attr("agent_template_host_values", HOST_TOOLS_SDK_LEVEL)
+    if not callable(impl):
+        return None
+    values = impl()
+    return values if isinstance(values, dict) else None
+
+
 def template_host_path() -> str | None:
     """The gateway's ``{HOST_PATH}`` value, or ``None`` on a gateway that does not offer it.
 
-    A Kiro Crew that offers ``kiro_crew.apps.agent_template_values.host_path`` renders
-    a fixed set of directories into the agents' ``{HOST_PATH}``, never its own
-    ``PATH``. ``None`` means an older gateway, which renders its own ``PATH``; the
-    caller restates that (:func:`.provision.host_path`). A value that is not a string
-    reads as ``None`` too.
+    ``""`` when the gateway offers its values but computes no ``{HOST_PATH}``: it
+    then renders none and registers none of the agents. ``None`` means a gateway
+    that does not say what it renders, which renders its own ``PATH``; the caller
+    restates that (:func:`.provision.host_path`). A value that is not a string reads
+    as ``None`` too.
     """
-    impl = _host_attr("kiro_crew.apps.agent_template_values", "host_path")
-    if not callable(impl):
+    values = _template_host_values()
+    if values is None:
         return None
-    value = impl()
+    value = values.get(_HOST_PATH, "")
     return value if isinstance(value, str) else None
 
 
 def template_uv_bin() -> str | None:
     """The gateway's ``{UV_BIN}`` value, or :func:`resolve_uv` on a gateway without it.
 
-    A Kiro Crew that offers ``kiro_crew.apps.agent_template_values.uv_bin`` renders
-    the ``uv`` it resolves spelled through its install's stable link, so an update
-    that moves the install to the next versioned directory does not change it. An
-    older gateway renders :func:`resolve_uv` as it is.
+    A gateway that offers its values renders the ``uv`` it resolves, so an update
+    that moves the install does not change what the agents name. An older gateway
+    renders :func:`resolve_uv` as it is.
     """
-    impl = _host_attr("kiro_crew.apps.agent_template_values", "uv_bin")
-    if not callable(impl):
+    values = _template_host_values()
+    if values is None:
         return resolve_uv()
-    found = impl()
+    found = values.get(_UV_BIN)
     return found if isinstance(found, str) and found else None
 
 
 # ── verified download ───────────────────────────────────────────────────────
 
 
-def download_to(dest: Path, url: str, **kwargs: Any) -> tuple[bool, str]:
-    """The gateway's sha256-verifying, https-only downloader: ``(ok, error)``.
+def verified_download(dest: Path, url: str, *, sha256: str, size: int) -> tuple[bool, str]:
+    """Fetch *url* to *dest* through the context's verified download: ``(ok, error)``.
 
-    ``(False, reason)`` on a gateway without it; nothing is fetched by any other
-    means.
+    ``ctx.verified_download`` (App Kit level 20): https only, the certificate
+    verified, a redirect followed only on the same host, and nothing visible at
+    *dest* until its length is *size* and its sha256 is *sha256*. It writes only
+    inside the app's data directory, so *dest* must be there and its folder must
+    already exist. Blocking: call it off the event loop.
+
+    ``(False, reason)`` on a context without it, for a *dest* outside the data
+    directory, and when the gateway installed nothing; nothing is fetched by any
+    other means.
     """
-    impl = _host_attr("kiro_crew.asset_downloader", "download_to")
-    if not callable(impl):
-        return False, "this Kiro Crew has no verified downloader (update Kiro Crew)"
-    return impl(dest, url, **kwargs)
+    fetch = getattr(bound(), "verified_download", None)
+    if not callable(fetch):
+        return False, (
+            "this Kiro Crew has no verified download "
+            f"(App Kit level {VERIFIED_DOWNLOAD_SDK_LEVEL} or later provides it; update Kiro Crew)"
+        )
+    try:
+        relative = Path(dest).relative_to(data_dir())
+    except (RuntimeError, ValueError):
+        return False, "the download must land inside the app's data directory"
+    try:
+        fetch(url, relative.as_posix(), sha256=sha256, size=size)
+    except (ValueError, TypeError, OSError) as exc:
+        # The gateway's wording names a host and a local folder, never the url's
+        # path, query or a credential.
+        return False, str(exc) or type(exc).__name__
+    return True, ""
 
 
 # ── path and read gates ─────────────────────────────────────────────────────
@@ -449,15 +521,18 @@ def download_to(dest: Path, url: str, **kwargs: Any) -> tuple[bool, str]:
 
 def is_sensitive_path(path: str) -> bool:
     """The gateway's sensitive-path gate. ``True`` (refuse) when it has none."""
-    impl = _host_attr("kiro_crew.security", "is_sensitive_path")
+    impl = _backend_sdk_attr("is_sensitive_path", BACKEND_SDK_LEVEL)
     if not callable(impl):
         return True
     return bool(impl(path))
 
 
-def path_contains_sensitive(path: str) -> bool:
-    """Whether *path* is an ancestor of a sensitive path. ``True`` when unknown."""
-    impl = _host_attr("kiro_crew.security", "path_contains_sensitive")
+def contains_sensitive_path(path: str) -> bool:
+    """Whether *path* is an ancestor of a sensitive path. ``True`` when unknown.
+
+    The backend SDK's ``contains_sensitive_path``.
+    """
+    impl = _backend_sdk_attr("contains_sensitive_path", BACKEND_SDK_LEVEL)
     if not callable(impl):
         return True
     return bool(impl(path))
@@ -486,31 +561,21 @@ def sniff_raster_mime(head: bytes) -> str | None:
     return found if isinstance(found, str) else None
 
 
-def aws_key_id_pattern() -> str | None:
-    """The gateway's AWS access key id pattern, or ``None`` when it has none.
-
-    ``None`` makes the caller treat every inline bitmap as credential-bearing,
-    which blanks the picture rather than serving an unscanned body.
-    """
-    pattern = _host_attr("kiro_crew.credential_patterns", "AWS_KEY_ID")
-    return pattern if isinstance(pattern, str) and pattern else None
-
-
 class FileTooLargeError(Exception):
     """A read exceeded its byte cap (also raised for the host's own type)."""
 
 
-def safe_read_file_bytes_nolink(path: str, within_root: str, **kwargs: Any) -> bytes | None:
+def read_bytes_nofollow(path: str, within_root: str, **kwargs: Any) -> bytes | None:
     """The gateway's descriptor-pinned, link-refusing, contained file read.
 
-    ``None`` for an absent or refused file, as the host answers, and also on a
-    gateway without the reader: the file is treated as unreadable rather than
-    read by name.
+    The backend SDK's ``read_bytes_nofollow``. ``None`` for an absent or refused
+    file, as the host answers, and also on a gateway without the reader: the file
+    is treated as unreadable rather than read by name.
     """
-    impl = _host_attr("kiro_crew.hooks", "safe_read_file_bytes_nolink")
+    impl = _backend_sdk_attr("read_bytes_nofollow", BACKEND_SDK_LEVEL)
     if not callable(impl):
         return None
-    host_too_large = _host_attr("kiro_crew.hooks", "FileTooLargeError")
+    host_too_large = _backend_sdk_attr("FileTooLargeError", BACKEND_SDK_LEVEL)
     too_large: tuple[type[BaseException], ...] = (
         (host_too_large,)
         if isinstance(host_too_large, type) and issubclass(host_too_large, BaseException)

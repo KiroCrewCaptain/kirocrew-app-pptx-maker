@@ -94,8 +94,8 @@ change here.
 | `provision._stage_static` / `_copy_tree` copied `prompts/` into the install dir, and `_render_agents` wrote rendered agent configs there (`backend/provision.py:380-460`) | Removed; `render_agent_template` / `placeholder_values` state the template contract and are pinned by tests | For an installed app the install dir IS this checkout. Re-staging `prompts/` would delete and re-copy the directory onto itself, and rendered configs there would put an executable `{UV_BIN}` in a file the agent can rewrite and dirty the tree an update verifies. The gateway renders the templates itself into `<data home>/rendered-agents/` (gap 1). |
 | `provision._register_resources` calling the private `kiro_crew.apps.bridges.register_app` (`backend/provision.py:491-528`) | Removed | Provisioning already did not call it (the gateway registers on enable and at start); it was kept only as a test seam. |
 | `kiro_crew.atomic_write.atomic_write`, `kiro_crew.platform_compat.{IS_WINDOWS, strip_extended_length_prefix, chmod_safe}`, `kiro_crew.subprocess_utf8.UTF8_TEXT`, `kiro_crew.browser_cli.os_deps.{os_release_ids, rpm_package_manager}` | `backend/_fs.py`, `backend/_compat.py`, `engine.UTF8_TEXT`, `backend/_os_deps.py` | Small and carrying no security decision, so restated (see gap 6). |
-| `kiro_crew.env.resolve_uv` (`backend/provision.py:45`) | The gateway's resolver through `_host.resolve_uv`, with the same ladder restated for a gateway without it | The gateway renders the same value into the agents' `{UV_BIN}`, so the two must agree. |
-| (none) | `kiro_crew.apps.agent_template_values.{host_path, uv_bin}` through `_host.template_host_path` / `_host.template_uv_bin`; on a gateway without them, its own `PATH` (plus the off-`PATH` `soffice` dir) and its resolver's `uv`, as that gateway renders | `placeholder_values` and `/deps` state what the gateway renders into `{HOST_PATH}` and `{UV_BIN}`. Not a security control, so a gateway without them refuses nothing. |
+| `kiro_crew.env.resolve_uv` (`backend/provision.py:45`) | The backend SDK's `uv_executable` (App Kit level 18) through `_host.resolve_uv`, with the same ladder restated for a gateway without it | The gateway renders the same value into the agents' `{UV_BIN}`, so the two must agree. |
+| (none) | The backend SDK's `agent_template_host_values` (App Kit level 18) through `_host.template_host_path` / `_host.template_uv_bin`; on a gateway without it, its own `PATH` (plus the off-`PATH` `soffice` dir) and its resolver's `uv`, as that gateway renders | `placeholder_values` and `/deps` state what the gateway renders into `{HOST_PATH}` and `{UV_BIN}`. Not a security control, so a gateway without them refuses nothing. |
 | `iconUrl` / `hero*` as absolute `/app-assets/pptx-maker/*.svg`, `screenshots` `/app-assets/…` (`app.json:85-99`) | `iconPath` / `hero*` / `screenshots` as repo-relative PNGs under `assets/` | A registry app's art is repo-relative, and the catalog's publish step refuses SVG for a non-builtin source. The PNGs were rendered from the built-in SVGs (kept beside them): the icon at 512×512 on an opaque tile with `--ico-a` / `--ico-b` resolved to fixed colours, the heroes at 1200×675 and the detail heroes at 1200×288. |
 | `ui.pages` `[{"route": "/pptx-maker", "icon": "Presentation"}]`, page compiled into the dashboard (`app.json:69-77`, `website/src/apps/builtinRegistry.ts:70`) | `ui.entry: "dist/index.mjs"` (a committed ESM bundle built from `ui/src/`), `ui.pages` `[{"route": "/apps/pptx-maker"}]`, no `icon` | An installed app ships its page as a bundle AppHost loads. The legacy `/pptx-maker` route and `Presentation` glyph of an adopted record come from Kiro Crew's adoption pin, never from this manifest. |
 | App Store copy keys in the dashboard catalogs (`website/src/components/appstore/appManifest.ts:349-363`) | `l10n` block in `app.json` for the 11 non-English locales | The listing copy travels with the app. It is the `apps.pptxMaker.manifest` subtree of `ui/i18n/<locale>.json`, kept equal by a test. |
@@ -104,40 +104,35 @@ change here.
 | Skill under Kiro Crew's `builtin_skills/`, synced into every install | `skills/pptx-maker`, declared in `app.json` `skills` | An app's skill ships with the app. Unchanged. |
 | No `minKiroCrewVersion` | `"minKiroCrewVersion": "0.12.0"` | The first Kiro Crew with App Kit level 1. |
 
-## Host controls without a seam: resolved from the gateway, fail closed
+## Host controls through public seams, fail closed
 
-Nothing in `backend/` but `_host.py` names `kiro_crew`, and `_host.py` imports it
-only lazily, by name, through one function (`_host._host_attr`;
-`tests/test_no_host_imports.py` pins both). These are security controls: copying
-them into this repository would leave a control that looks present and drifts
-from the one the gateway enforces. Each is looked up at the moment it is needed;
-when the gateway lacks it, the operation that needs it is **refused**, never run
-without it, and `register_routes` reports the reason through `ctx.health`
-(`tests/test_host_seams.py`).
-
-| Built-in import | Where | Without it |
-|---|---|---|
-| `kiro_crew.sandbox.{sandboxed_spawn_argv, run_limited}` | `backend/engine.py:42`, `backend/provision.py:47` | `SandboxUnavailableError`: no engine snippet, icon script or `uv` call is spawned; provisioning reports the failure |
-| `kiro_crew.asset_downloader.download_to` | `backend/engine_source.py:48` | The engine install is refused with its reason; nothing is fetched another way |
-| `kiro_crew.security.{is_sensitive_path, path_contains_sensitive}` | `backend/paths.py:34`, `backend/routes.py:89-94` | Every path is treated as sensitive: no deck or library file resolves, no deck root is accepted |
-| `kiro_crew.hooks.{safe_read_file_bytes_nolink, FileTooLargeError}` | `backend/decks.py:37-39`, `backend/library.py:34-37`, `backend/routes.py:74`, `:87` | Every deck file and style reads as unreadable (`None`) |
-| `kiro_crew.credential_patterns.AWS_KEY_ID` | `backend/routes.py:85`, `:213` | Every inline bitmap is treated as credential-bearing and blanked |
-| `kiro_crew.security.REDACTED_CREDENTIAL_TAG` | `backend/routes.py:90` | The same literal marker |
-| `kiro_crew.security.scan_exfiltration_urls` | `backend/_host.py` (`refuses`) | Every deck link, deck id, slide slug and scanned picture is refused |
-| `kiro_crew.executors.subprocess_executor` | `backend/routes.py:86` | The loop's default pool |
-
-## Host controls through the public backend SDK
-
-A control that Kiro Crew's public backend SDK (`kiro_crew.apps.backend_sdk`,
-App Kit `api-reference.md`, "Backend SDK") now offers is reached through it
-instead of its private name. `_host.py` still looks it up lazily, by name,
-through `_host._backend_sdk_attr`, which also requires the package's
-`SDK_LEVEL` to be at least the level the name arrived at; a gateway below it
-refuses exactly as a missing private control did.
+Nothing in `backend/` but `_host.py` names `kiro_crew`, `_host.py` imports it
+only lazily, by name, through one function (`_host._host_attr`), and the only
+module it names is the public backend SDK (`kiro_crew.apps.backend_sdk`, App Kit
+`api-reference.md`, "Backend SDK"; `tests/test_no_host_imports.py` pins all
+three). The engine download uses the context's `ctx.verified_download`. These are
+security controls: copying them into this repository would leave a control that
+looks present and drifts from the one the gateway enforces. Each is looked up at
+the moment it is needed, through `_host._backend_sdk_attr`, which also requires
+the package's `SDK_LEVEL` to be at least the level the name arrived at; when the
+gateway lacks it, the operation that needs it is **refused**, never run without
+it, and `register_routes` reports the reason through `ctx.health`
+(`tests/test_host_seams.py`). Since `0.3.6` no private `kiro_crew` name is
+reached.
 
 | Built-in import | Here | Level | Without it |
 |---|---|---|---|
-| `kiro_crew.messaging.raster.{sniff_raster_mime, SNIFF_BYTES}` (`backend/routes.py:88`) | `kiro_crew.apps.backend_sdk.sniff_raster_mime`, handed the whole candidate blob (a longer buffer answers the same, so no `SNIFF_BYTES` window is copied) | 14 | No inline bitmap is exempted from redaction (it is scanned as text), so pictures inside slide previews are blanked; `register_routes` reports it |
+| `kiro_crew.sandbox.{sandboxed_spawn_argv, run_limited, SandboxUnavailableError}` (`backend/engine.py:42`, `backend/provision.py:47`) | `run_sandboxed` (the chokepoint, the resource limits and the cleanup in one call) and `SandboxUnavailableError` | 7 | `SandboxUnavailableError`: no engine snippet, icon script or `uv` call is spawned; provisioning reports the failure |
+| `kiro_crew.security.{is_sensitive_path, path_contains_sensitive}` (`backend/paths.py:34`, `backend/routes.py:89-94`) | `is_sensitive_path`, `contains_sensitive_path` | 7 | Every path is treated as sensitive: no deck or library file resolves, no deck root is accepted |
+| `kiro_crew.hooks.{safe_read_file_bytes_nolink, FileTooLargeError}` (`backend/decks.py:37-39`, `backend/library.py:34-37`, `backend/routes.py:74`, `:87`) | `read_bytes_nofollow`, `FileTooLargeError` | 7 | Every deck file and style reads as unreadable (`None`) |
+| `kiro_crew.messaging.raster.{sniff_raster_mime, SNIFF_BYTES}` (`backend/routes.py:88`) | `sniff_raster_mime`, handed the whole candidate blob (a longer buffer answers the same, so no `SNIFF_BYTES` window is copied) | 14 | No inline bitmap is exempted from redaction (it is scanned as text), so pictures inside slide previews are blanked |
+| `kiro_crew.security.scan_exfiltration_urls` (`backend/_host.py`, `refuses`) | `contains_exfiltration_url` | 17 | Every deck link, deck id, slide slug and scanned picture is refused |
+| `kiro_crew.credential_patterns.AWS_KEY_ID` (`backend/routes.py:85`, `:213`) | `iter_credential_matches` over the encoded body (`_host.holds_credential`), which matches the AWS key id and every other credential shape the gateway knows; none of the others can arise by chance in base64 | 17 | Every inline bitmap is treated as credential-bearing and blanked |
+| `kiro_crew.security.REDACTED_CREDENTIAL_TAG` (`backend/routes.py:90`) | `CREDENTIAL_PLACEHOLDER` | 17 | The same literal marker |
+| `kiro_crew.env.resolve_uv` | `uv_executable` | 18 | The same ladder, restated |
+| (none, see above) | `agent_template_host_values` | 18 | What an older gateway renders, restated |
+| `kiro_crew.asset_downloader.download_to` (`backend/engine_source.py:48`) | `ctx.verified_download`, at the `codeload.github.com` tarball url (the same bytes and digest as `github.com/<repo>/archive/<commit>.tar.gz`, which redirects there, to another host, and the verified download follows a redirect only on the same host) with the archive's exact size beside its sha256 | 20 | The engine install is refused with its reason; nothing is fetched another way |
+| `kiro_crew.executors.subprocess_executor` (`backend/routes.py:86`) | Dropped: blocking work runs on the event loop's default pool, which the gateway configures | none | (none) |
 
 ## Remaining gaps
 
@@ -157,12 +152,10 @@ refuses exactly as a missing private control did.
    the registry's catch-all, so they would answer `/api/apps/pptx-maker/*` for an
    adopted record instead of this app's. Adoption has to take the name out of that
    loop for a record it moves (Kiro Crew's adoption change, not a change here).
-3. **Sandboxed child processes, verified download, path and read gates.** The
-   controls in the table above have no App Kit seam. A generic `ctx.subprocess`
-   (spawn an argv through the gateway's chokepoint at a named sandbox mode, with
-   the scrubbed environment and resource limits), a verified-download seam, and
-   `ctx.paths.is_sensitive` / `contains_sensitive` / a pinned reader would remove
-   every `kiro_crew` name from `_host.py`.
+3. **Sandboxed child processes, verified download, path and read gates.** Closed
+   in `0.3.6`. Every control in the table above is a public seam: the backend
+   SDK's names (App Kit levels 7 to 18) and `ctx.verified_download` (level 20).
+   `_host.py` names no private `kiro_crew` module.
 4. **Reveal folder.** The built-in's deck viewer revealed the deck folder in the
    host's file manager through the dashboard's private `revealOrOpen` and
    `useCanReveal` (`website/src/apps/pptx-maker/DeckViewer.tsx:16`, `:125`,
@@ -270,6 +263,7 @@ here (Kiro Crew `app-kit-platform.md` section 33, enforced by its PR Hygiene
 | `0.3.2` | A stable launch for the rendered `sdpm` MCP server: on a Kiro Crew that offers `kiro_crew.apps.agent_template_values.{host_path, uv_bin}`, `{HOST_PATH}` and `{UV_BIN}` follow the gateway's fixed values instead of its own `PATH`, so the approved launch survives another shell and an update; an older gateway keeps today's values | `backend/_host.py`, `backend/provision.py`, `backend/engine.py`, `tests/test_provision.py`, `tests/test_host_seams.py` |
 | `0.3.3` | kirodotdev/KiroCrew#31183: an engine whose `mcp-local/uv.lock` was rewritten after install (a `uv run` without `--frozen`) kept its source marker and its venv, so provisioning skipped it, Install engine was never offered again, and `uv run --frozen` installed the rewritten lock, so the `sdpm` server still failed to start. The engine now counts as installed only while that lock hashes to the one inside the pinned archive (`ENGINE_LOCK_SHA256`, which moves with `ENGINE_COMMIT`, `ENGINE_TARBALL_SHA256` and `ENGINE_TAG`); a drifted or missing lock reads as not installed, so the next provision fetches the tree again and rebuilds its venv | `backend/engine_source.py`, `tests/test_engine_source.py`, `tests/test_engine.py`, `ATTRIBUTION.md` |
 | `0.3.4` | kirodotdev/KiroCrew#37408: a gateway that masks only credential values inside a link leaves a URL that carries data out as written, so the four refusals that compared `redact(x)` with `x` (deck link, deck id, slide slug, scanned picture) would pass it. They now call `refuses()`, which also asks the gateway's exfil scan (`kiro_crew.security.scan_exfiltration_urls`) and fails closed when the scan is missing or raises | `backend/_host.py`, `backend/decks.py`, `backend/paths.py`, `backend/routes.py`, `tests/fakehost.py`, `tests/test_host_seams.py` |
+| `0.3.6` | Every host control is a public seam, so this repository reaches no private `kiro_crew` name. The sandboxed run, the sensitive-path gate and the no-follow reader are the backend SDK's (App Kit level 7); the exfil scan, the credential scan over an inline picture's encoded body and the credential marker are its level-17 names (`contains_exfiltration_url`, `iter_credential_matches`, `CREDENTIAL_PLACEHOLDER`); `uv` and the rendered `{HOST_PATH}` and `{UV_BIN}` are its level-18 names (`uv_executable`, `agent_template_host_values`, in place of the `agent_template_values.{host_path, uv_bin}` no Kiro Crew build offered); and the engine download is `ctx.verified_download` (level 20), at the `codeload.github.com` tarball url with the archive's exact size. The executor lookup is gone. Also carries #9 (provision the engine with a compatible CPython 3.12) and #10 (shorter staged build paths on Windows). Kiro Crew's adoption pin for this release carries `minAppSdkLevel` 20 | `backend/_host.py`, `backend/engine.py`, `backend/engine_source.py`, `backend/provision.py`, `backend/routes.py`, `backend/decks.py`, `backend/library.py`, `tests/fakehost.py`, `tests/conftest.py`, `tests/test_host_seams.py`, `tests/test_no_host_imports.py`, `tests/test_engine.py`, `tests/test_engine_source.py`, `tests/test_provision.py`, `tests/test_spawn_scope_layers.py` |
 | `0.3.5` | kirodotdev/KiroCrew#41924 publishes the gateway's raster sniffer as `kiro_crew.apps.backend_sdk.sniff_raster_mime` (App Kit level 14), the same function by reference. The inline-bitmap check now asks it instead of the private `kiro_crew.messaging.raster`, so this repository no longer reaches that module. A gateway below level 14 answers no raster, so slide-preview pictures are blanked rather than exempted on an unverified signature. Kiro Crew's adoption pin for this release carries `minAppSdkLevel` 14 (`adoption_pin.py compute --min-sdk-level 14`), so a host without the name keeps its wheel copy | `backend/_host.py`, `backend/routes.py`, `tests/fakehost.py`, `tests/test_host_seams.py` |
 
 In `0.3.2`, `paths.engine_config_path()` mirrors the engine's
@@ -304,7 +298,7 @@ carries the same change into the built-in.
 | `test/test_pptx_maker_routes.py` | `tests/test_routes.py` | Driven through `tests/harness.py`, which serves the records `register_routes` returns the way the gateway's registry does (exact path, then one-segment `{param}` patterns; a raising handler is a 502). `TestDenyByDefault` became `TestRouteRegistration` (the route table, no route on a gateway-owned suffix, structural records, the context bound, no file touched, degraded health on an older host, a fresh context adopted) and `TestDisabledAppServesNothing`. `/config` cases call `/settings`. The audit cases read `ctx.audit` rows. |
 | `test/test_pptx_maker_owner_gate.py` | `tests/test_owner_gate.py` | Through the harness; denials are the context's (`pptx-maker.<verb>`). Plus a gateway without the gate refusing every mutating route. Each async case runs on its own `asyncio.run` loop. |
 | `test/test_pptx_maker_provision.py` | `tests/test_provision.py` | `TestResolveUv` runs against the gateway's resolver and, removed, the restated ladder. `TestRenderAgents` pins `render_agent_template` / `placeholder_values` (no placeholder left or undeclared, Windows paths and quotes, the managed tool on the MCP `PATH`, a system tool winning, the prompt resource in this checkout, the engine paths `paths` derives, the built-in's rendered configs) and that provisioning writes nothing into the checkout. Dropped: `TestStageStatic` and the `_register_resources` cases (the code is gone). The shipped-agent `@server` check no longer consults Kiro Crew's private managed-server list (these specs name none). |
-| `test/test_pptx_maker_engine_source.py` | `tests/test_engine_source.py` | Downloads go through the fake host's verified downloader over the same mocked opener; plus a gateway without the downloader. Dropped: the three `redact_url` cases, the SSL-context and the https-only-redirect cases, which test the host's `asset_downloader` (Kiro Crew keeps them). |
+| `test/test_pptx_maker_engine_source.py` | `tests/test_engine_source.py` | Downloads go through the fake context's `verified_download` over the same mocked opener, into the context's data directory; plus a gateway without it and an archive outside the data directory. Dropped: the three `redact_url` cases, the SSL-context and the https-only-redirect cases, which test the host's `asset_downloader` (Kiro Crew keeps them). |
 | `test/test_pptx_maker_{agents,decks,engine,library,paths,preview_tools,soffice_hint,background_tasks}.py`, the two in-package tests | `tests/test_{agents,decks,engine,library,paths,preview_tools,soffice_hint,background_tasks,venv_paths,preview_tool_discovery}.py` | Imports only. `test_agents.py` reads `ui/src/PptxMakerPage.tsx` and no longer skips without it. |
 | (none) | `tests/test_host_seams.py`, `tests/test_no_host_imports.py`, `tests/test_manifest_contract.py` | Every fail-closed path above; only `_host.py` reaches `kiro_crew`, lazily; manifest parity with the built-in, the `l10n` block, repo-relative PNG art, hooks resolve, the skill and agents, the committed bundle importing only host modules (and only level-0 names by name), an adoptable tree. |
 | `website/src/test/PptxMakerPage.test.tsx`, `PptxDeckViewerCov80.test.tsx`, `SlidePreviewSanitize.test.tsx`, `SlidePreviewCoverage.test.tsx`, `apps/pptx-maker/LibraryPanel.coverage.test.tsx`, `apps/pptx-maker/api.coverage.test.ts` | `ui/tests/` | Run by vitest with stand-ins for the host SDK (`ui/tests/stubs/`). The two SlidePreview files (the SVG sanitizer, the only place agent-written SVG becomes DOM, and the component's render paths) port with import paths only. The deck-start cases assert the chat launcher call (gap 5); the reveal cases became copy-path cases (gap 4); the settings cases expect `/settings`. Plus `ui/tests/externalSeams.test.tsx`: the catalogs, the transport, no private dashboard import, the older-host fallback. |
@@ -336,11 +330,11 @@ loop. Removing the built-in, its skill, its catalog keys and the core references
 
 1. Call the full 40-hex SHA of the commit to pin `C` (`git rev-parse HEAD`).
 2. In the Kiro Crew release PR that adds adoption, run
-   `python3 scripts/adoption_pin.py compute <this URL> C --min-sdk-level 14` and
+   `python3 scripts/adoption_pin.py compute <this URL> C --min-sdk-level 20` and
    add the row it prints to `src/kiro_crew/apps/adoption-pins.json`; then
-   `python3 scripts/adoption_pin.py verify`. Level 14 is the backend SDK's
-   raster sniffer (`0.3.5` and later); the tool refuses a lower level for a tree
-   that names it.
+   `python3 scripts/adoption_pin.py verify`. Level 20 is `ctx.verified_download`
+   (`0.3.6` and later; the backend SDK's raster sniffer needed 14 from `0.3.5`);
+   the tool refuses a lower level for a tree that uses it.
 3. The KiroCrewApps row for `pptx-maker` switches from `"type": "builtin"` to
    `"type": "git"`, this URL, `"ref": "C"`, never a branch name.
 4. The pin's `version` is this `app.json`'s, and adoption also requires the

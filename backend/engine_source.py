@@ -9,7 +9,7 @@ user to install by hand. ``uv`` is now a declared Python dependency (resolved
 through the installed package, see :mod:`.provision`), but ``git`` is NOT on PyPI
 and is far less universal than it looks — a slim Docker image, a fresh Windows
 box or a locked-down corporate host may have none. A plain HTTPS download of
-``https://github.com/<owner>/<repo>/archive/<commit>.tar.gz`` plus stdlib
+``https://codeload.github.com/<owner>/<repo>/tar.gz/<commit>`` plus stdlib
 ``tarfile`` needs nothing but the interpreter.
 
 **A strictly stronger pin.** The old flow cloned a git TAG and then verified
@@ -27,8 +27,8 @@ The same shape as Kiro Crew's own embedding-model download and Papyrus's
 managed Tectonic: an https-only fetch of a large third-party artifact,
 sha256-pinned, streamed and hashed as it arrives, verified BEFORE install,
 extracted with every archive member validated. The fetch goes through the
-gateway's verified downloader (``asset_downloader.download_to``, reached through
-``_host``), never through a copy of it.
+gateway's verified download (``ctx.verified_download``, App Kit level 20, reached
+through ``_host``), never through a copy of it.
 
 Everything here is synchronous and BLOCKING (network + filesystem). Callers MUST
 already be off the event loop — see ``routes.off_loop`` and the
@@ -46,15 +46,18 @@ import tarfile
 from pathlib import Path
 from typing import Callable
 
-from . import _host as asset_downloader
+from . import _host
 from ._fs import atomic_write
 
 logger = logging.getLogger("kirocrew.app.pptx-maker")
 
 # ── the pin ─────────────────────────────────────────────────────────────────
 
-#: The public engine repository. Its only role is building the archive URL.
-ENGINE_REPO = "https://github.com/aws-samples/sample-spec-driven-presentation-maker"
+#: The public engine repository, as ``<owner>/<repo>``.
+ENGINE_SLUG = "aws-samples/sample-spec-driven-presentation-maker"
+
+#: The repository's page, recorded in the source marker. Not a download URL.
+ENGINE_REPO = f"https://github.com/{ENGINE_SLUG}"
 
 #: The upstream release the pinned tree corresponds to. DISPLAY ONLY — it is
 #: what the UI shows as ``engineTag`` and what keys the icon-pack marker. It is
@@ -64,9 +67,9 @@ ENGINE_REPO = "https://github.com/aws-samples/sample-spec-driven-presentation-ma
 #: :data:`ENGINE_TARBALL_SHA256` — see :func:`installed_tag`.
 ENGINE_TAG = "v0.3.8"
 
-#: The exact commit the fetch requests. GitHub serves
-#: ``/archive/<full-commit-sha>.tar.gz`` for any commit, and a commit id is
-#: content-addressed — unlike a tag, upstream cannot move it.
+#: The exact commit the fetch requests. GitHub serves a tarball of any commit
+#: (:data:`_ARCHIVE_URL_TEMPLATE`), and a commit id is content-addressed — unlike a
+#: tag, upstream cannot move it.
 ENGINE_COMMIT = "b7c7fcf0972b33a480f1b717a3de5bc288d53742"
 
 #: CPython version verified with this engine's locked dependencies. Review it
@@ -78,20 +81,26 @@ ENGINE_PYTHON_VERSION = (3, 12)
 #: Produced by downloading the artifact this module names and hashing it as
 #: published::
 #:
-#:     URL=https://github.com/aws-samples/sample-spec-driven-presentation-maker/archive/b7c7fcf0972b33a480f1b717a3de5bc288d53742.tar.gz
-#:     curl -sL -o engine.tar.gz "$URL" && shasum -a 256 engine.tar.gz
+#:     URL=https://codeload.github.com/aws-samples/sample-spec-driven-presentation-maker/tar.gz/b7c7fcf0972b33a480f1b717a3de5bc288d53742
+#:     curl -s -o engine.tar.gz "$URL" && shasum -a 256 engine.tar.gz && wc -c < engine.tar.gz
 #:
 #: The download was repeated four times and the digest reproduced byte-for-byte
-#: each time, which is what makes pinning a GitHub ``/archive/`` tarball viable:
-#: for a fixed commit sha the generated archive is stable (the only variable
-#: input, the pax ``comment`` header, is the commit sha itself).
+#: each time, which is what makes pinning a GitHub tarball viable: for a fixed
+#: commit sha the generated archive is stable (the only variable input, the pax
+#: ``comment`` header, is the commit sha itself). ``github.com``'s
+#: ``/archive/<commit>.tar.gz`` redirects to this url and serves the same bytes.
 #:
 #: Bumping the engine means bumping :data:`ENGINE_COMMIT`, this digest,
-#: :data:`ENGINE_LOCK_SHA256` and :data:`ENGINE_TAG` together, and reviewing
-#: :data:`ENGINE_PYTHON_VERSION`. Bumping the commit
+#: :data:`ENGINE_TARBALL_SIZE`, :data:`ENGINE_LOCK_SHA256` and :data:`ENGINE_TAG`
+#: together, and reviewing :data:`ENGINE_PYTHON_VERSION`. Bumping the commit
 #: alone fails verification on every host, which is the intended failure mode:
 #: the digest, not the tag and not the commit, is what decides whether code runs.
 ENGINE_TARBALL_SHA256 = "ffe8e10b973cada1f6e99629ac780bde25461b432ad07943b4f15ca11c07dfe0"
+
+#: The exact length of that archive in bytes, from the same download. The verified
+#: download installs nothing whose length differs, so a truncated transfer or an
+#: error page is refused before its digest is even compared.
+ENGINE_TARBALL_SIZE = 3_159_833
 
 #: sha256 of ``mcp-local/uv.lock`` inside that archive (see :func:`is_installed`),
 #: from the same download::
@@ -99,7 +108,10 @@ ENGINE_TARBALL_SHA256 = "ffe8e10b973cada1f6e99629ac780bde25461b432ad07943b4f15ca
 #:     tar -xzOf engine.tar.gz '*/mcp-local/uv.lock' | shasum -a 256
 ENGINE_LOCK_SHA256 = "599d5386f7d1c07683291fc7b9cbeca2b7bd39fe6bb8c800a2164283410542dc"
 
-_ARCHIVE_URL_TEMPLATE = "{repo}/archive/{commit}.tar.gz"
+#: Where GitHub serves a commit's tarball itself. ``github.com``'s ``/archive/``
+#: url redirects here, to another host, and the verified download follows a
+#: redirect only on the same host, so the fetch names this host directly.
+_ARCHIVE_URL_TEMPLATE = "https://codeload.github.com/{slug}/tar.gz/{commit}"
 
 #: Override the download URL for a mirrored or air-gapped deployment. Must be
 #: ``https://``; :data:`ENGINE_TARBALL_SHA256` still has to match, so an
@@ -112,15 +124,7 @@ SKIP_DOWNLOAD_ENV = "KIROCREW_PPTX_SKIP_ENGINE_DOWNLOAD"
 
 _HTTPS_SCHEME = "https"
 
-# ── download tuning ─────────────────────────────────────────────────────────
-
-#: ~3MB over a slow link. Generous, and the caller reports rather than hangs.
-DOWNLOAD_TIMEOUT = 300
-_HTTP_CHUNK_BYTES = 1 << 18
-
-#: Floor for a plausible engine archive. The pinned one is ~3MB; anything under
-#: this is an error page or a truncated transfer, not a source tree.
-_MIN_ARCHIVE_BYTES = 100_000
+# ── extraction limits ───────────────────────────────────────────────────────
 
 #: Ceiling on the bytes any single archive member may expand to, and on the
 #: whole tree. The pinned tarball unpacks to ~6MB; these bound a decompression
@@ -164,43 +168,36 @@ def archive_url() -> str:
         logger.warning(
             "pptx-maker: %s must be an https:// URL — ignoring the override", ENGINE_URL_ENV
         )
-    return _ARCHIVE_URL_TEMPLATE.format(repo=ENGINE_REPO, commit=ENGINE_COMMIT)
+    return _ARCHIVE_URL_TEMPLATE.format(slug=ENGINE_SLUG, commit=ENGINE_COMMIT)
 
 
 def download_archive(archive: Path) -> tuple[bool, str]:
-    """Fetch the pinned archive to *archive* through the shared verified downloader.
+    """Fetch the pinned archive to *archive* through the gateway's verified download.
 
-    Returns ``(ok, error)``. The gateway's ``download_to`` streams the
-    bytes into a staging file beside *archive*, hashes them as they arrive, and
-    renames them onto *archive* only once the digest matches
-    :data:`ENGINE_TARBALL_SHA256` and the body is at least
-    :data:`_MIN_ARCHIVE_BYTES`. A refused transfer leaves nothing at *archive*,
-    so :func:`_extract_tar` never sees unverified bytes.
+    Returns ``(ok, error)``. ``ctx.verified_download`` streams the bytes into a
+    staging file beside *archive*, hashes them as they arrive, and renames them
+    onto *archive* only once the body is exactly :data:`ENGINE_TARBALL_SIZE` bytes
+    and its digest is :data:`ENGINE_TARBALL_SHA256`. A refused transfer leaves
+    nothing at *archive*, so :func:`_extract_tar` never sees unverified bytes.
+    *archive* must be inside the app's data directory, in a folder that exists.
 
-    The shared function never raises. Its error string carries the exception
-    TYPE and a host-only url, never the exception text: ``InvalidURL`` and
-    ``HTTPError`` embed the url verbatim, a mirror override may hold a
-    credential, and this string reaches the dashboard.
+    The gateway's error wording names a host and a local folder, never the url's
+    path, query or a credential: a mirror override may hold a credential, and this
+    string reaches the dashboard.
 
-    Cross-host redirects are allowed, but only to https. The pinned archive url
-    is built from constants in this file and 302s to ``codeload.github.com``;
-    the override is the operator's own environment. Both are shapes the shared
-    module accepts for ``allow_cross_host_redirects``, and the digest still
-    decides.
+    A redirect is followed only on the same host, so the pinned url is
+    ``codeload.github.com``'s own (:data:`_ARCHIVE_URL_TEMPLATE`), and a mirror
+    override must serve the file itself. The digest still decides.
 
     BLOCKING — callers are already off the loop.
     """
     if os.environ.get(SKIP_DOWNLOAD_ENV) == "1":
         return False, f"{SKIP_DOWNLOAD_ENV}=1 — the engine download was skipped"
-    ok, error = asset_downloader.download_to(
+    ok, error = _host.verified_download(
         archive,
         archive_url(),
         sha256=ENGINE_TARBALL_SHA256,
-        min_bytes=_MIN_ARCHIVE_BYTES,
-        timeout_secs=DOWNLOAD_TIMEOUT,
-        chunk_bytes=_HTTP_CHUNK_BYTES,
-        allow_cross_host_redirects=True,
-        label=f"pptx-maker engine {ENGINE_COMMIT[:12]}",
+        size=ENGINE_TARBALL_SIZE,
     )
     if not ok:
         logger.warning("pptx-maker: engine download failed: %s", error)
@@ -295,7 +292,7 @@ def _extract_tar(archive: Path, dest: Path) -> None:
 def _single_root(tree: Path) -> Path | None:
     """The one top-level directory inside an extracted tree, or ``None``.
 
-    A GitHub ``/archive/`` tarball wraps everything in
+    A GitHub commit tarball wraps everything in
     ``<repo>-<commit>/``, and the engine is that directory's contents — so the
     wrapper is unwrapped rather than kept, which is what makes
     ``engine_root()/mcp-local`` resolve the same way a clone did.

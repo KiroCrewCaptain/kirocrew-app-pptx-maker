@@ -1,14 +1,15 @@
-"""Only ``backend/_host.py`` reaches Kiro Crew, and only lazily.
+"""Only ``backend/_host.py`` reaches Kiro Crew, only lazily, and only its public SDK.
 
-The gateway's public surface for an app is the ``AppContext`` its hooks get and
-the structural route records the registry accepts. PPTX Maker also needs
-security controls no App Kit seam provides yet (the sandbox chokepoint, the
-verified downloader, the sensitive-path gate, the pinned reader; see
-PORTING.md), and those are
-imported from the running gateway in ``_host.py`` alone, by name at call time,
-so a missing one refuses the operation instead of breaking the module load. No
-other backend module may import ``kiro_crew`` in any form, and ``_host.py`` has
-no top-level ``kiro_crew`` import.
+The gateway's public surface for an app is the ``AppContext`` its hooks get, the
+structural route records the registry accepts, and the backend SDK
+(``kiro_crew.apps.backend_sdk``) for the security controls no context seam
+carries (the sandboxed run, the sensitive-path gate, the no-follow reader, the
+exfil and credential scans; see PORTING.md). That package is imported from the
+running gateway in ``_host.py`` alone, by name at call time, so a missing name
+refuses the operation instead of breaking the module load. No other backend module
+may import ``kiro_crew`` in any form, ``_host.py`` has no top-level ``kiro_crew``
+import, and the only ``kiro_crew`` module it names is the public package: a private
+name moves between Kiro Crew releases.
 """
 
 from __future__ import annotations
@@ -75,6 +76,11 @@ class TestNoHostImports(unittest.TestCase):
                 )
                 self.assertFalse(any(n.split(".")[0] == "kiro_crew" for n in names), names)
         self.assertEqual(_host_imports(BACKEND / "_host.py"), [])
+
+    def test_the_host_shim_names_only_the_public_backend_sdk(self) -> None:
+        self.assertEqual(
+            sorted(set(_host_strings(BACKEND / "_host.py"))), ["kiro_crew.apps.backend_sdk"]
+        )
 
     def test_the_scan_sees_each_import_form(self) -> None:
         """The detector itself: every spelling it must catch is caught."""

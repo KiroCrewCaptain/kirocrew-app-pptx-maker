@@ -136,7 +136,7 @@ def _read_style_text(path: Path, within: Path) -> str | None:
     "~/.ssh/config", "styles/pwned.html")`` made ``/styles`` and ``/style`` serve SSH
     configuration to the dashboard. Verified before this guard.
 
-    ``safe_read_file_bytes_nolink`` is the gateway's own answer to exactly this: it
+    ``read_bytes_nofollow`` is the gateway's own answer to exactly this: it
     opens with ``O_NOFOLLOW``, then ``fstat``s that descriptor and rejects
     ``st_nlink > 1`` (its documented R30 F1 case) and any non-regular file, and with
     ``within_root`` it also requires the OPENED descriptor's real path to sit inside
@@ -148,7 +148,7 @@ def _read_style_text(path: Path, within: Path) -> str | None:
     thread and surface as an opaque 500.
     """
     try:
-        raw = hooks.safe_read_file_bytes_nolink(str(path), within_root=str(within))
+        raw = hooks.read_bytes_nofollow(str(path), within_root=str(within))
     except FileTooLargeError:
         return None
     if raw is None:

@@ -15,8 +15,8 @@ versioned third-party checkout with its own dependency closure (``lxml``,
 process would put an unpinned dependency set on the gateway's import path.
 
 Every function here is BLOCKING and must be called through
-:func:`routes.off_loop` (which hands it to the gateway's
-``subprocess_executor()``). Nothing in this module may be awaited
+:func:`routes.off_loop` (which hands it to a worker thread of the event loop's
+default pool). Nothing in this module may be awaited
 directly — a ``subprocess.run`` on the gateway's single event loop freezes every
 session (AUTOSDE ``no-blocking-call-on-event-loop``).
 
@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import _compat as platform_compat
 from . import engine_source, paths
-from ._host import run_limited, sandboxed_spawn_argv, template_host_path
+from ._host import run_sandboxed, template_host_path
 
 #: ``kiro_crew.subprocess_utf8.UTF8_TEXT``: decode a child's output as UTF-8 and
 #: never raise on a bad byte, whatever the host's locale.
@@ -205,9 +205,10 @@ class ProvisionState:
 def _spawn(argv: list[str], *, cwd: str, timeout: int) -> EngineResult:
     """Run *argv* to completion under the shared sandbox + resource ceiling.
 
-    Routed through the gateway's ``sandboxed_spawn_argv`` (``_host``) rather than a
-    bare :func:`wrap_argv`, because that chokepoint also returns a
-    CREDENTIAL-SCRUBBED environment. The child here is a third-party engine
+    Routed through the gateway's sandboxed run (the backend SDK's
+    ``run_sandboxed``, through ``_host``) rather than a bare ``subprocess.run``,
+    because that chokepoint also hands the child a CREDENTIAL-SCRUBBED
+    environment. The child here is a third-party engine
     cloned from a public repository at provision time, driven with
     model-authored deck content — inheriting the gateway's raw ``os.environ``
     would hand it ``AWS_SECRET*``/``AWS_SESSION*``, ``SSH_AUTH_SOCK``,
@@ -233,15 +234,16 @@ def _spawn(argv: list[str], *, cwd: str, timeout: int) -> EngineResult:
     # from the rendered agent config — so the managed tool dir belongs on THAT
     # process's PATH (`provision.mcp_tools_path`), and putting it here would only
     # look like a fix.
-    # The chokepoint already applies the cgroup scope as its outermost layer.
-    # Wrapping again nests a second ``systemd-run --scope`` that inherits the
-    # first one's PID and collides on its auto-named unit.
-    wrapped, env, cleanup = sandboxed_spawn_argv(argv, mode="strict", strip_python_env=True)
+    # The chokepoint already applies the cgroup scope as its outermost layer and
+    # removes its own cleanup path, so *argv* goes in unwrapped. Wrapping again
+    # nests a second ``systemd-run --scope`` that inherits the first one's PID and
+    # collides on its auto-named unit.
     try:
-        proc = run_limited(  # noqa: S603 - fixed argv, contained paths only
-            wrapped,
+        proc = run_sandboxed(  # noqa: S603 - fixed argv, contained paths only
+            argv,
+            mode="strict",
+            strip_python_env=True,
             cwd=cwd,
-            env=env,
             capture_output=True,
             **UTF8_TEXT,
             timeout=timeout,
@@ -250,12 +252,6 @@ def _spawn(argv: list[str], *, cwd: str, timeout: int) -> EngineResult:
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("pptx-maker: engine spawn failed: %s", exc)
         return EngineResult(returncode=1, stderr=str(exc))
-    finally:
-        if cleanup:
-            try:
-                os.unlink(cleanup)
-            except OSError:
-                pass
     return EngineResult(
         returncode=proc.returncode,
         stdout=proc.stdout or "",
@@ -423,13 +419,12 @@ def optional_dep_path(name: str) -> str | None:
     the managed probe would report LibreOffice as installed BY Kiro Crew, which the UI
     renders as a claim about the host that this app never made.
 
-    On a current Kiro Crew the engine's MCP server runs with ``{HOST_PATH}``, a fixed
-    set of directories rather than the gateway's own ``PATH``
-    (:func:`.provision.host_path`), then the managed directory. Those directories are
-    searched instead, in the same order, so ``/deps`` reports a tool present exactly
-    when that server can run it and never one only the gateway's ``PATH`` holds. On
-    Windows they end with LibreOffice's fixed install roots, so the second step above
-    is part of the first there.
+    On a Kiro Crew that says what it renders (App Kit level 18 or later), the
+    engine's MCP server runs with that ``{HOST_PATH}`` (:func:`.provision.host_path`),
+    then the managed directory. Those directories are searched instead, in the same
+    order, so ``/deps`` reports a tool present exactly when that server can run it.
+    The gateway adds LibreOffice's fixed Windows install root there when its own
+    ``PATH`` misses it, so the second step above is part of the first then.
 
     Returns ``None`` when the tool is available from no source.
     """
